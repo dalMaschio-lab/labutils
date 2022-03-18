@@ -1,22 +1,27 @@
 import labutils.plot.tol_colors as tolc
-
+import os
+import itertools as it
 import numpy as np
 from matplotlib import pyplot as plt
 from scipy import stats
 
 
 class AutoFigure(object):
-    figsize_save = {"figsize": (10,10), "dpi": 180}
+    figsize_save = {"figsize": (20,10), "dpi": 90}
     figsize_show = {"figsize": (16,9), "dpi": 120}
     def __init__(self, path,
                  ncols=1, nrows=1,
                  sharex=False, sharey=False,
-                 gridspecs={}, figsize={}, svformat=".svg", block=True):
+                 gridspecs={}, figsize={}, svformat=".svg",
+                 block=True, style="bmh", transparent=False):
         self.path = path
+        self.transparent = transparent
         self.format = svformat
         self.figsize_save.update(figsize)
         self.figsize_show.update(figsize)
         self.block = block
+        self.style_ctx = plt.style.context(style)
+        self.style_ctx.__enter__()
         self.figure, self.axes = plt.subplots(
             ncols=ncols, nrows=nrows,
             sharex=sharex, sharey=sharey,
@@ -29,11 +34,12 @@ class AutoFigure(object):
         self.figure.set_tight_layout(True)
         if isinstance(self.path, (os.PathLike, str)):
             if isinstance(self.format, (list, tuple)):
-                [self.figure.savefig(self.path + fmt, transparent=True) for fmt in self.format]
+                [self.figure.savefig(self.path + fmt, transparent=self.transparent) for fmt in self.format]
             else:
-                self.figure.savefig(self.path + self.format, transparent=True)
+                self.figure.savefig(self.path + self.format, transparent=self.transparent)
         else:
             plt.show(block=self.block)
+        self.style_ctx.__exit__(type, value, traceback)
         return False
 
 def quantify(data, ticks, colors, axes=None, width=.2, outlier=True, dbg=False):
@@ -41,14 +47,14 @@ def quantify(data, ticks, colors, axes=None, width=.2, outlier=True, dbg=False):
     if axes is None:
         axes = plt.gca()
     b = axes.boxplot(
-        data, positions=np.arange(len(ticks)) - 2*width/3, labels=ticks,
+        data, positions=np.arange(len(ticks)), labels=ticks,
         notch=False, widths=width, whis=(5,95), showfliers=False,
         patch_artist=True, zorder=.5
     )
     [(patch.set_facecolor(c)) for patch,c in zip(b["boxes"], colors)] 
     [
         axes.plot(
-            np.random.normal(i + 2*width/3, width/3, size=datacol.size), datacol,
+            np.random.normal(i, width/3, size=datacol.size), datacol,
             mfc=colors[i], mec="k", marker="o", ls="", alpha=.8, zorder=1.5
         )
         for i,datacol in enumerate(data)
@@ -72,6 +78,7 @@ def make_sigbar(pval, xticks, ypos, axis=None, pos=0, log=False, dbg=False):
     ytick = ytick[-1] - ytick[0]
     ytick = (np.log10(ypos*10) if log else ytick/100)
     ypos += ytick * 2.5 * (pos+1)
+    xticks = (xticks[0] + .05, xticks[1] - .05)
     axis.plot(xticks, (ypos, ypos), color=(0,0,0))
     if not dbg:
         try:

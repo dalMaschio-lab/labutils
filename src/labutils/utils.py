@@ -1,5 +1,5 @@
 import numpy as np
-
+import re, os
 
 def times2convregress(regressors: np.ndarray, fr: float, ca2_off: float=7.8, ca2_on: float=1.4, ca2_delay=5.6):
     transient = np.hstack((np.zeros(round((ca2_delay + ca2_on) * fr)),
@@ -29,3 +29,14 @@ def load_s2p_data(s2pdir, nplanes):
             ops.setdefault("meanImg", []).append(op["meanImg"])
         ops["meanImg"] = np.stack(ops["meanImg"])
         return np.concatenate(cells), np.stack(pos), ops
+
+def find_fish(folder, gcamp=(6, 7)):
+    fish_re = re.compile('([0-9]+)_([A-Z]+)[0-9]+_G([{}])'.format("".join(map(str, gcamp))))
+    fishes = []
+    for d in os.listdir(folder):
+        m = re.match(fish_re, d)
+        if m is not None:
+            date, cond, gcamp = m.groups()
+            fn = m.string
+            fishes.append((fn, date, cond, gcamp))
+    return fishes
