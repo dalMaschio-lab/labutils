@@ -1,4 +1,4 @@
-import json, os, requests, nrrd, tifffile, stl
+import json, os, requests, vedo
 import numpy as np
 
 
@@ -11,25 +11,23 @@ class BrainRegion(object):
         self._mesh = None
         self.broken_stl = broken_stl
         self.flip_normal = flip_normal
+        self.color = color
     
     @property
     def mesh(self):
         if self.broken_stl:
             return None
         elif self._mesh is None:
-            self._mesh = stl.Mesh.from_file(os.path.join(self.path, 'stl.stl'))
+            self._mesh = vedo.io.load(os.path.join(self.path, 'stl.stl'))
+            self._mesh.color(self.color, alpha=.3)
             if self.flip_normal:
-                self._mesh.vectors = self._mesh.vectors[:, (1,0,2), ...]
-                self._mesh.update_normals()
-                self._mesh.com_faces = self._mesh.vectors.mean(axis=1)
+                self._mesh.reverse(normals=True)
         else:
             pass
         return self._mesh
 
-    def is_inside(self, point):
-        tmp1 = self.mesh.com_faces - np.tile(point, (self.mesh.vectors.shape[0],1))
-        mn = np.linalg.norm(tmp1, axis=1).argmin()
-        return self.mesh.normals[mn].dot(tmp1[mn])
+    def is_inside(self, points):
+        return self.mesh.insidePoints(points, returnIds=True)
 
 
 class MPIN_Atlas:
@@ -46,7 +44,9 @@ class MPIN_Atlas:
         with open(os.path.join(path, self.json_region)) as fd:
             reg = json.load(fd)["data"]
         self.hierarchy = self._open_h(reg['regions_hierarchy'])
-        self.regions = {}
+        self.regions = {
+            0: BrainRegion("outside", None, broken_stl=True, color="#000000"),
+            }
         reg['regions_dictionary']['1'] = {
             'name': 'brain',
             "parent": None,
@@ -84,7 +84,7 @@ class MPIN_Atlas:
         return [(i['id'], self._open_h(i['children'])) for i in h]
 
     def get_hierarchy_level(self, level: int):
-        ids = []
+        ids = [0]
         h = self.hierarchy
         while level:
             ids.extend([i[0] for i in h if not i[1]])
