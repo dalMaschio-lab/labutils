@@ -1,4 +1,5 @@
 import numpy as np
+from skimage import transform
 import re, os
 
 def times2convregress(regressors: np.ndarray, fr: float, ca2_off: float=7.8, ca2_on: float=1.4, ca2_delay=5.6):
@@ -40,3 +41,10 @@ def find_fish(folder, gcamp=(6, 7)):
             fn = m.string
             fishes.append((fn, date, cond, gcamp))
     return fishes
+
+def _norm_u16stack2float(img, mx=1., pc=(1,99), k=(1,4,4)):
+    img = img.astype(np.float64)
+    ptp = np.percentile(img, pc)
+    img = (mx/(ptp[1]-ptp[0]) * (img - ptp[0])).astype(np.float32)
+    img = np.clip(img, 0., mx)
+    return transform.downscale_local_mean(img, k)

@@ -33,6 +33,18 @@ class BrainRegion(object):
 class MPIN_Atlas:
     json_region ='load_regions_data.json'
     def __init__(self, path):
+        self.live_template = os.path.join(path, 'MPIN-Atlas__Reference_brains__Live__HuCH2BGCaMP.nrrd')
+        self.std_template = os.path.join(path, 'MPIN-Atlas__Reference_brains__Fixed__HuC.nrrd')
+        self.antsoptpoints = {
+            'this2std': [
+                "-t", f"[{path}/live2fixed_0GenericAffine.mat,1]",
+                "-t", f"[{path}/live2fixed_1InverseWarp.nii.gz]",
+            ],
+            'std2this': [
+                "-t", f"[{path}/live2fixed_1Warp.nii.gz]",
+                "-t", f"[{path}/live2fixed_0GenericAffine.mat]",
+            ]
+        }
         with open(os.path.join(path, "url")) as fd:
             remote_url = fd.readline().strip()
         if not os.path.exists(os.path.join(path, self.json_region)):
