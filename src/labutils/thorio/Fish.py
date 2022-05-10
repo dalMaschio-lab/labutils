@@ -20,9 +20,9 @@ class AlignableZExp(AlignableVolumeData, ZExp):
 
 
 class Fish(_Model):
-    def __init__(self, path):
+    def __init__(self, path, zbatlas):
         super().__init__(path)
-        self.Z = AlignableZExp(os.path.join(path, "Z"), self)
+        self.Z = AlignableZExp(os.path.join(path, "Z"), self, alignTo=zbatlas)
         AlignableTExp.ops = dict(
             diamater= 7,
             tau=5. if self.md['gcamp'] == "7" else 9.,
