@@ -1,6 +1,7 @@
 from .Zstack import ZExp
 from ..utils import norm_u16stack2float
 from ..zbatlas import MPIN_Atlas
+import os, tempfile, nrrd
 
 class AlignableRigidPlaneData:
     def __init__(self, *args, alignTo: (None, ZExp)=None, **kwargs):
@@ -78,8 +79,8 @@ class AlignableVolumeData:
         print("#" * 10, '\n')
 
     def transformPoints(self, points):
-        if condition:
-            pass
+        if not (os.exists(os.path.join(self.path, 'z2live_0GenericAffine.mat')) and os.exists(os.path.join(self.path, 'z2live_1InverseWarp.nii.gz'))):
+            self._align()
         axord = [1,2,0]
         # out = np.empty((self.Z.shape[0],3), dtype=np.float32)
         # out[:,0] = range(out.shape[0])

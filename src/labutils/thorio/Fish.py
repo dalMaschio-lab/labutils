@@ -20,8 +20,8 @@ class AlignableZExp(AlignableVolumeData, ZExp):
 
 
 class Fish(_Model):
-    def __init__(self, path, zbatlas):
-        super().__init__(path)
+    def __init__(self, path, zbatlas, md={'gcamp': 6, tseries:[]}):
+        super().__init__(path, md=md)
         self.Z = AlignableZExp(os.path.join(path, "Z"), self, alignTo=zbatlas)
         AlignableTExp.ops = dict(
             diamater= 7,
