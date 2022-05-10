@@ -79,7 +79,6 @@ def make_sigbar(pval, xticks, ypos, axis=None, pos=0, log=False, dbg=False):
     ytick = (np.log10(ypos*10) if log else ytick/100)
     ypos += ytick * 2.5 * (pos+1)
     xticks = (xticks[0] + .05, xticks[1] - .05)
-    axis.plot(xticks, (ypos, ypos), color=(0,0,0))
     if not dbg:
         try:
             pval = int(np.log10(.5/pval))
@@ -89,5 +88,7 @@ def make_sigbar(pval, xticks, ypos, axis=None, pos=0, log=False, dbg=False):
             pval = "$\\infty$"
     else:
         pval = f"{pval:.3f}"
-    axis.text(sum(xticks,0)/2, ypos + ytick, pval if pval else "n.s.")
+    axis.text(sum(xticks,0)/2, ypos + ytick, pval if pval else "")
+    if pval:
+        axis.plot(xticks, (ypos, ypos), color=(0,0,0))
     axis.set_ylim((None, None))
