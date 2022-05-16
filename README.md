@@ -26,8 +26,13 @@ After this instantiating for the first time an atlas object it will download all
 ```python
 from labutils.zbatlas import MPIN_Atlas
 atlas = MPIN_Atlas('path/to/zbatlas')
-```
+print(*[f"id {k} is {i.name}" for k, i in atlas.regions.items()]) # print all the regiosn id and names
 
+cerebellum = atlas.regions[959] # get a specific region id (a bit clunky and I still haven't made a way to access by name)
+lots_of_regions_list = atlas.get_hierarchy_level(3) # get all the regions that tile the brain with a certain level 
+cerebellum.is_inside(positions) # get a bool array if a number of points are inside
+cerebellum.mesh # get a mesh to render with vedo or other software
+```
 ## How to use the fish classes
 
 To use the fish classes first you will need to setup your data as follows:
@@ -63,11 +68,16 @@ from labutils.zbatlas import MPIN_Atlas
 from labutils.thorio import Fish
 atlas = MPIN_Atlas('path/to/zbatlas')
 myfish = Fish('path/to/20211005_LIGHT1', atlas, md={'gcamp': 6, tseries:['T000', 'T001', 'T002', 'T003' ]})  # for example
+
 # it will create a md file with some data for each fish
 myfish.Z  # to access the Z stack
 myfish.Ts[0] # to open the first Tseries
 myfish.Ts[0].cells # to access the time evolution of neurons from suite2p (will be a little slow to load data the first time, or will also run s2p if it wasnàt done)
 myfish.Ts[0].atlaspos # to access position of cells but in the atlas space (will align Zstack to atlas if not already done)
+
+# check what positions are inside cerbellum
+cerebellum = atlas.regions[959]
+cerebellum.isInside(myfish.Ts[0].atlaspos)
 ```
 If ants was already run for a zstack you can move the transform files in the Z folder with the names
 ```
