@@ -13,7 +13,7 @@ class AutoFigure(object):
                  ncols=1, nrows=1,
                  sharex=False, sharey=False,
                  gridspecs={}, figsize={}, svformat=".svg",
-                 block=True, style="bmh", transparent=False):
+                 block=False, style="bmh", transparent=False):
         self.path = path
         self.transparent = transparent
         self.format = svformat
@@ -49,7 +49,7 @@ def quantify(data, ticks, colors, axes=None, width=.2, outlier=True, dbg=False):
     b = axes.boxplot(
         data, positions=np.arange(len(ticks)), labels=ticks,
         notch=False, widths=width, whis=(5,95), showfliers=False,
-        patch_artist=True, zorder=.5
+        patch_artist=True, zorder=.5, meanline=False, medianprops={"marker": '*'}
     )
     [(patch.set_facecolor(c)) for patch,c in zip(b["boxes"], colors)] 
     [
@@ -59,16 +59,23 @@ def quantify(data, ticks, colors, axes=None, width=.2, outlier=True, dbg=False):
         )
         for i,datacol in enumerate(data)
     ]
-    for couple in it.combinations(range(len(ticks)),2):
-        if outlier:
-            _, pval = stats.mannwhitneyu(data[couple[0]], data[couple[1]])
-        else:
-            pcs = [np.percentile(data[c], (5,95)) for c in couple]
-            dts = [[d for d in data[c] if pc[0]<d<pc[1]] for c, pc in zip(couple, pcs)]
-            _, pval = stats.mannwhitneyu(dts[0], dts[1])
-        make_sigbar(pval, couple, max(datacol.max() for datacol in data), axis=axes, pos=couple[1]-couple[0], dbg=dbg)
-        pvalmn[couple[0], couple[1]] = pval
-    pvalk = stats.kruskal(*data)[1]
+    if len(data) < 2:
+        pvalmn, pvalk = np.NaN, np.NaN
+    else:
+        for couple in it.combinations(range(len(ticks)),2):
+            try:
+                if outlier:
+                    _, pval = stats.mannwhitneyu(data[couple[0]], data[couple[1]])
+                else:
+                    pcs = [np.percentile(data[c], (5,95)) for c in couple]
+                    dts = [[d for d in data[c] if pc[0]<d<pc[1]] for c, pc in zip(couple, pcs)]
+                    _, pval = stats.mannwhitneyu(dts[0], dts[1])
+            except ValueError as e:
+                print(e, " setting pval to 1.0")
+                pval = 1.0
+            make_sigbar(pval, couple, max(datacol.max() for datacol in data), axis=axes, pos=couple[1]-couple[0], dbg=dbg)
+            pvalmn[couple[0], couple[1]] = pval
+        pvalk = stats.kruskal(*data)[1]
     return pvalmn, pvalk, *zip(*[(d.mean(), d.std()) for d in data])
 
 def make_sigbar(pval, xticks, ypos, axis=None, pos=0, log=False, dbg=False):
@@ -83,7 +90,7 @@ def make_sigbar(pval, xticks, ypos, axis=None, pos=0, log=False, dbg=False):
         try:
             pval = int(np.log10(.5/pval))
             pval = "*" * pval if pval < 6 else f"{pval}*"
-        except OverflowError as e:
+        except (OverflowError, ZeroDivisionError) as e:
             print(e, "\n", "setting pval stars to inf")
             pval = "$\\infty$"
     else:
@@ -91,4 +98,5 @@ def make_sigbar(pval, xticks, ypos, axis=None, pos=0, log=False, dbg=False):
     axis.text(sum(xticks,0)/2, ypos + ytick, pval if pval else "")
     if pval:
         axis.plot(xticks, (ypos, ypos), color=(0,0,0))
-    axis.set_ylim((None, None))
+    _, mx =axis.get_ylim()
+    axis.set_ylim((None, max(ypos+2*ytick, mx)))
