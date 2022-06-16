@@ -1,5 +1,5 @@
 from .Zstack import ZExp
-from ..utils import norm_u16stack2float
+from ..utils import _norm_u16stack2float
 from ..zbatlas import MPIN_Atlas
 import os, tempfile, nrrd
 

@@ -1,8 +1,7 @@
-from . import _ThorExp
+from .thorio_common import _ThorExp
 from ..utils import load_s2p_data, detect_bidi_offset
 import numpy as np
 from xml.etree import ElementTree as EL
-from suite2p.run_s2p import run_plane, default_ops
 import os 
 
 
@@ -26,7 +25,7 @@ class TExp(_ThorExp):
         self.img = None
         # self.img = np.memmap(os.path.join(path, self.RAW_FN), dtype=np.uint16, mode="r").reshape(self.shape)
 
-    def _import_xml(self, nplanes):
+    def _import_xml(self, nplanes=1, **kwargs):
         xml = EL.parse(os.path.join(self.path, self.md_xml))
         md = {}
         for child in xml.getroot():
@@ -60,6 +59,10 @@ class TExp(_ThorExp):
         self._meanImg = ops['meanImg']
 
     def _run_s2p(self, ops={}, force_reg=False):
+        try:
+            run_plane
+        except NameError:
+            from suite2p.run_s2p import run_plane, default_ops
         self.img = np.memmap(os.path.join(self.path, self.data_raw), dtype=np.uint16, mode="r").reshape(self.md['shape'])
         ops = {**default_ops(), **self.ops, **ops}
 

@@ -1,4 +1,4 @@
-from . import _ThorExp
+from .thorio_common import _ThorExp
 import numpy as np
 from xml.etree import ElementTree as EL
 import os, nrrd, tifffile

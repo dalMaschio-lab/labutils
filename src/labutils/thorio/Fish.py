@@ -1,4 +1,4 @@
-from . import _Model
+from .thorio_common import _Model
 from .Tseries import TExp
 from .Zstack import ZExp
 from .Alignment import AlignableRigidPlaneData, AlignableVolumeData
@@ -20,7 +20,7 @@ class AlignableZExp(AlignableVolumeData, ZExp):
 
 
 class Fish(_Model):
-    def __init__(self, path, zbatlas, md={'gcamp': 6, tseries:[]}):
+    def __init__(self, path, zbatlas, md={'gcamp': 6, 'tseries':[]}):
         super().__init__(path, md=md)
         self.Z = AlignableZExp(os.path.join(path, "Z"), self, alignTo=zbatlas)
         AlignableTExp.ops = dict(
@@ -29,6 +29,6 @@ class Fish(_Model):
             **TExp.ops,
         )
         self.Ts = [
-            AlignableTExp(os.path.join(path, p), self, alignTo=self.Z)
+            AlignableTExp(os.path.join(path, p), self, alignTo=self.Z, nplanes=30)
             for p in self.md['tseries']
         ]
