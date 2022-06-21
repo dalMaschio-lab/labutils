@@ -2,6 +2,7 @@ from .thorio_common import _Model
 from .Tseries import TExp
 from .Zstack import ZExp
 from .Alignment import AlignableRigidPlaneData, AlignableVolumeData
+import os
 
 
 class AlignableTExp(AlignableRigidPlaneData, TExp):
@@ -12,7 +13,7 @@ class AlignableTExp(AlignableRigidPlaneData, TExp):
     def _calculateatlaspos(self):
         newpos = self.transformPoints(self.pos)
         atlaspos = self.parent.Z.transformPoints(newpos)
-        self.atlaspos = atlaspos
+        self._atlaspos = atlaspos
 
 
 class AlignableZExp(AlignableVolumeData, ZExp):

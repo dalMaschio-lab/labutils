@@ -1,7 +1,9 @@
 from .Zstack import ZExp
 from ..utils import _norm_u16stack2float
 from ..zbatlas import MPIN_Atlas
-import os, tempfile, nrrd
+import sys, os, tempfile, nrrd, numpy as np, subprocess #, zlib
+from skimage import feature
+# from functools import reduce
 
 class AlignableRigidPlaneData:
     def __init__(self, *args, alignTo: (None, ZExp)=None, **kwargs):
@@ -13,32 +15,33 @@ class AlignableRigidPlaneData:
         if self.alignTo is None:
             raise ValueError("set target alignment to a Zexp")
         try:
-            normZstack = self.alignTo.norm_Zstack
+            norm_Zstack = self.alignTo.norm_Zstack
             lown_Zstack = self.alignTo.lown_Zstack
         except AttributeError:
-            self.alignTo.norm_Zstack = norm_u16stack2float(self.alignTo.img)
-            self.alignTo.lown_Zstack = norm_u16stack2float(self.alignTo.img, k=(downZ,1,1))
-            normZstack = self.alignTo.norm_Zstack
+            self.alignTo.norm_Zstack = _norm_u16stack2float(self.alignTo.img)
+            self.alignTo.lown_Zstack = _norm_u16stack2float(self.alignTo.norm_Zstack, k=(downZ,1,1))
+            norm_Zstack = self.alignTo.norm_Zstack
             lown_Zstack = self.alignTo.lown_Zstack
         print(f"aligning {self.path} to {self.alignTo.path}")
         # assert(T.px2um == self.Z.px2um[1])
-        norm_Tstack = norm_u16stack2float(self.meanImg)
+        norm_Tstack = _norm_u16stack2float(self.meanImg)
         shifts = []
         for i, plane in enumerate(norm_Tstack):
             plane = np.stack([plane])
             lowshift = feature.match_template(lown_Zstack, plane).argmax()
             slz = slice(max(0,downZ*(lowshift - 2)), min(downZ*(lowshift + 2), norm_Zstack.shape[0]))
+            print(slz, lowshift, plane.shape, norm_Zstack[slz,...].shape)
             z = feature.match_template(norm_Zstack[slz, ...], plane).argmax() + slz.start
-            shifted_img = feature.match_template(self.Z.img[z], T.meanImg[i], pad_input=True,)
+            shifted_img = feature.match_template(self.alignTo.img[z], self.meanImg[i], pad_input=True,)
             sls = [slice(zc-100, zc+100) for zc in map(lambda x: x//2,  shifted_img.shape)]
             shift = np.unravel_index(shifted_img[sls[0], sls[1]].argmax(), shifted_img[sls[0], sls[1]].shape)
-            shifts.append((z, *tuple(s + sl.start - d // 2 for s, sl, d in zip(shift, sls, T.meanImg.shape[1:]))))
+            shifts.append((z, *tuple(s + sl.start - d // 2 for s, sl, d in zip(shift, sls, self.meanImg.shape[1:]))))
         self.shifts = np.stack(shifts)
         
     def transformPoints(self, points):
         if self.shifts is None:
             self._align()
-        pointshifts = self.shifts[points[:, 0].astype(np.uint16)]
+        pointshifts = self.shifts[points[:, 0].astype(np.uint16)].astype(np.float64)
         pointshifts[:, 1:] += points[:, 1:]
         return pointshifts
         
@@ -79,16 +82,15 @@ class AlignableVolumeData:
         print("#" * 10, '\n')
 
     def transformPoints(self, points):
-        if not (os.exists(os.path.join(self.path, 'z2live_0GenericAffine.mat')) and os.exists(os.path.join(self.path, 'z2live_1InverseWarp.nii.gz'))):
+        if not (os.path.exists(os.path.join(self.path, 'z2live_0GenericAffine.mat')) and os.path.exists(os.path.join(self.path, 'z2live_1InverseWarp.nii.gz'))):
             self._align()
-        axord = [1,2,0]
         # out = np.empty((self.Z.shape[0],3), dtype=np.float32)
         # out[:,0] = range(out.shape[0])
         # out[:,1]=350
         # out[:,2]=340
         out = points.copy()
-        out *= np.tile(self.px2um, (out.shape[0],1))
-        out[:, ...] = out[:, axord]
+        out *= np.tile(self.px2units_um, (out.shape[0],1))
+        out[:, ...] = out[:, self.axord2nrrd_d]
         with tempfile.NamedTemporaryFile("w", suffix=".csv") as fd_out, tempfile.NamedTemporaryFile("r", suffix=".csv") as fd_in:
             self.save_csv(fd_out, out)
             subprocess.run([
@@ -101,10 +103,9 @@ class AlignableVolumeData:
                 stdout=sys.stdout, stderr=sys.stderr, check=True)
             atlaspos = self.load_csv(fd_in)[:, :-1]
         header = nrrd.read_header(self.alignTo.std_template)
-        axord = [2,0,1]
-        atlaspos[:, ...] = atlaspos[:, axord] 
-        atlaspos /= np.tile(np.diag(header["space directions"])[axord], (atlaspos.shape[0],1))
-            
+        atlaspos[:, ...] = atlaspos[:, self.axord2nrrd_i] 
+        atlaspos /= np.tile(np.diag(header["space directions"])[self.axord2nrrd_i], (atlaspos.shape[0],1))
+        return atlaspos
 
     @staticmethod
     def _save_csv(fd, arr):
