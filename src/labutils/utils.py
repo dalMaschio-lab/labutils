@@ -10,6 +10,12 @@ def corrcoef_f(x, y=None, rowvar=True, dtype=None):
     np.fill_diagonal(corr_mat, 1)
     return corr_mat
 
+def binarize(data, axis=1):
+    median = np.median(data, axis=axis)
+    total_std = data.std(axis=None)
+    bin_threshold = 2.5 * (total_std + np.tile(median.reshape(-1,1), (1, data.shape[axis])))
+    return data > bin_threshold, bin_threshold
+
 def times2convregress(regressors: np.ndarray, fr: float, ca2_off: float=7.8, ca2_on: float=1.4, ca2_delay=5.6):
     transient = np.hstack((np.zeros(round((ca2_delay + ca2_on) * fr)),
                            (np.exp(np.linspace(np.log(2), np.log(12), round(ca2_on * fr)))-2) / (12-2),
