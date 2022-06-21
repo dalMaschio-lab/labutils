@@ -5,7 +5,9 @@ import numpy as np
 from matplotlib import pyplot as plt
 from scipy import stats
 
-
+plt.rcParams.update({'font.size':18})
+plt.rcParams['svg.fonttype'] = 'none'
+plt.rcParams["mathtext.default"] = 'regular'
 class AutoFigure(object):
     figsize_save = {"figsize": (20,10), "dpi": 90}
     figsize_show = {"figsize": (16,9), "dpi": 120}
@@ -49,7 +51,7 @@ def quantify(data, ticks, colors, axes=None, width=.2, outlier=True, dbg=False):
     b = axes.boxplot(
         data, positions=np.arange(len(ticks)), labels=ticks,
         notch=False, widths=width, whis=(5,95), showfliers=False,
-        patch_artist=True, zorder=.5, meanline=False, medianprops={"marker": '*'}
+        patch_artist=True, zorder=.5, meanline=False, medianprops={"marker": '*', "zorder": 2.5}
     )
     [(patch.set_facecolor(c)) for patch,c in zip(b["boxes"], colors)] 
     [
@@ -95,8 +97,8 @@ def make_sigbar(pval, xticks, ypos, axis=None, pos=0, log=False, dbg=False):
             pval = "$\\infty$"
     else:
         pval = f"{pval:.3f}"
-    axis.text(sum(xticks,0)/2, ypos + ytick, pval if pval else "")
+    txt = axis.text(sum(xticks,0)/2, ypos + ytick, pval if pval else "")
     if pval:
         axis.plot(xticks, (ypos, ypos), color=(0,0,0))
     _, mx =axis.get_ylim()
-    axis.set_ylim((None, max(ypos+2*ytick, mx)))
+    axis.set_ylim((None, max(ypos+ytick*4, mx)))
