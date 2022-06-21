@@ -2,6 +2,14 @@ import numpy as np
 from skimage import transform
 import re, os
 
+def corrcoef_f(x, y=None, rowvar=True, dtype=None):
+    corr_mat = np.corrcoef(x, y=y, rowvar=rowvar, dtype=dtype)
+    corr_mat = (corr_mat + corr_mat.T)/2
+    tmp = np.isnan(corr_mat)
+    corr_mat[tmp] = 0
+    np.fill_diagonal(corr_mat, 1)
+    return corr_mat
+
 def times2convregress(regressors: np.ndarray, fr: float, ca2_off: float=7.8, ca2_on: float=1.4, ca2_delay=5.6):
     transient = np.hstack((np.zeros(round((ca2_delay + ca2_on) * fr)),
                            (np.exp(np.linspace(np.log(2), np.log(12), round(ca2_on * fr)))-2) / (12-2),
