@@ -4,9 +4,9 @@ from scipy import interpolate
 
 
 class Stytraexp(object):
-    tail_k_re = re.compile(r'f([0-9])_theta_([0-9]+)')
-    keys = ['t']
+    tail_k_re = re.compile(r'f?([0-9])?_?theta_([0-9]+)')
     def __init__(self, path, session_id, clip_first=50):
+        self.keys = ['t']
         self.cachefn = os.path.join(path, "{}_cache.npz")
         with open(os.path.join(path, f"{session_id}_metadata.json")) as fd:
             self.md = json.load(fd)
@@ -15,6 +15,7 @@ class Stytraexp(object):
             self.load_cache()
         except Exception as e:
             print(e)
+            num_segments = self.md["tracking+fish_tracking"]["n_segments"]-1 if "tracking+fish_tracking" in self.md else self.md['tracking+tail_tracking']['n_output_segments']
             hd, data = self.load_csv(os.path.join(path, f"{session_id}_behavior_log.csv"))
             hs, stim = self.load_csv(os.path.join(path, f"{session_id}_stimulus_log.csv"))
             data = data[clip_first:, ...]
@@ -28,8 +29,8 @@ class Stytraexp(object):
                     if k == 't':
                         continue
                     elif (match := self.tail_k_re.match(k)):
-                        k = f'f{match.group(1)}_tail'
-                        self.__dict__.setdefault(k, np.empty((self.t.size, self.md["tracking+fish_tracking"]["n_segments"]-1)))
+                        k = f'f{match.group(1)}_tail' if match.group(1) else 'tail'
+                        self.__dict__.setdefault(k, np.empty((self.t.size, num_segments)))
                         self.__dict__[k][..., int(match.group(2))] = arr[:, i]
                     else:
                         self.__dict__[k] = arr[:, i]
