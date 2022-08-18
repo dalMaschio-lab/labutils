@@ -89,6 +89,9 @@ class AlignableVolumeData:
         # out[:,1]=350
         # out[:,2]=340
         out = points.copy()
+        for idx, (maxdim, flip) in enumerate(zip(self.md['shape'], self.flipax)):
+            if flip:
+                out[:, idx] = maxdim - out[:, idx]
         out *= np.tile(self.px2units_um, (out.shape[0],1))
         out[:, ...] = out[:, self.axord2nrrd_d]
         with tempfile.NamedTemporaryFile("w", suffix=".csv") as fd_out, tempfile.NamedTemporaryFile("r", suffix=".csv") as fd_in:
@@ -103,8 +106,9 @@ class AlignableVolumeData:
                 stdout=sys.stdout, stderr=sys.stderr, check=True)
             atlaspos = self.load_csv(fd_in)[:, :-1]
         header = nrrd.read_header(self.alignTo.std_template)
-        atlaspos[:, ...] = atlaspos[:, self.axord2nrrd_i] 
-        atlaspos /= np.tile(np.diag(header["space directions"])[self.axord2nrrd_i], (atlaspos.shape[0],1))
+        # atlaspos[:, ...] = atlaspos[:, self.axord2nrrd_i] 
+        # atlaspos /= np.tile(np.diag(header["space directions"])[self.axord2nrrd_i], (atlaspos.shape[0],1))
+        atlaspos /= np.tile(np.diag(header["space directions"]), (atlaspos.shape[0],1))
         return atlaspos
 
     @staticmethod

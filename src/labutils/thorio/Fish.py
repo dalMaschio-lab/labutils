@@ -23,7 +23,7 @@ class AlignableZExp(AlignableVolumeData, ZExp):
 class Fish(_Model):
     def __init__(self, path, zbatlas, md={'gcamp': 6, 'tseries':[]}):
         super().__init__(path, md=md)
-        self.Z = AlignableZExp(os.path.join(path, "Z"), self, alignTo=zbatlas)
+        self.Z = AlignableZExp(os.path.join(path, "Z"), self, alignTo=zbatlas, flipax=md.get('z_flipax', (False, False, False)))
         AlignableTExp.ops = dict(
             diamater= 7,
             tau=5. if self.md['gcamp'] == "7" else 9.,

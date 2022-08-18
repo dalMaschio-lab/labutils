@@ -14,13 +14,14 @@ class ZExp(_ThorExp):
     nrrd_fields = None
     axord2nrrd_d = (1,2,0)
     axord2nrrd_i = (2,0,1)
-    def __init__(self, path, parent):
+    def __init__(self, path, parent, flipax=(False, False, False)):
         super().__init__(path, parent)
         print(f"loading Z image data at {path}...")
+        self.flipax = flipax
         px2units_um = np.array(list(map(lambda x: np.round(x*1e3,3), self.md['px2units'])))[self.axord2nrrd_d,]
         try:
             self.img, header = nrrd.read(os.path.join(path, self.img_nrrd.format("")), custom_field_map=self.nrrd_fields)
-            self.img = np.moveaxis(self.img, (0,1,2), self.axord2nrrd_d)
+            self.img = np.moveaxis(self.img, (0,1,2), self.axord2nrrd_d)[self._get_flipaxes()]
             print(np.diag(header["space directions"]).tolist(), px2units_um.tolist())
             assert(np.diag(header["space directions"]).tolist() == px2units_um.tolist())
         except Exception as e:
@@ -34,12 +35,17 @@ class ZExp(_ThorExp):
             outtype = np.uint8 if (ptp := np.ptp(self.img)) < np.iinfo(np.uint8).max else np.uint16
             self.img = (np.iinfo(outtype).max/ptp * (self.img - self.img.min())).astype(outtype)
             header = {"space dimension": 3, "space units": ["microns", "microns", "microns"],"space directions": np.diag(px2units_um)}
-            nrrd.write(os.path.join(path, self.img_nrrd.format("")), np.moveaxis(self.img, (0,1,2), self.axord2nrrd_i), header=header)
-        self.px2units_um = px2units_um[self.axord2nrrd_i]
+            nrrd.write(
+                os.path.join(path, self.img_nrrd.format("")),
+                np.moveaxis(self.img[self._get_flipaxes()], (0,1,2), self.axord2nrrd_i),
+                header=header
+            )
+        self.px2units_um = px2units_um[self.axord2nrrd_i,]
         try:
-            assert(list(self.img.shape) == self.md['shape'])
+            assert(tuple(self.img.shape) == tuple(self.md['shape']))
         except AssertionError as e:
             print(self.img.shape, self.md['shape'])
+            print(type(self.img.shape), type(self.md['shape']))
             raise e
 
     def _import_xml(self, nplanes):
@@ -58,3 +64,6 @@ class ZExp(_ThorExp):
         md['px2units'] = (1e-3*z2um, 1e-3*px2um, 1e-3*px2um)
         md['units'] = ('m', 'm', 'm')
         self.md.update(**md)
+
+    def _get_flipaxes(self):
+        return [slice(None, None, -1 if flip else None) for flip in self.flipax]
