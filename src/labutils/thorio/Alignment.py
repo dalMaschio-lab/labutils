@@ -74,10 +74,12 @@ class AlignableVolumeData:
                                 "--winsorize-image-intensities", "[0.005,0.995]",
                                 "--use-histogram-matching", "0",
                                 "-r", f"[{template},{inpt},1]",
-                                "-t", "rigid[0.15]", "-m", f"MI[{template},{inpt},1,32,Regular,0.25]", *rigid_params,
-                                "-t", "Affine[0.15]", "-m", f"MI[{template},{inpt},1,32,Regular,0.45]", *rigid_params,
-                                # "-t", "SyN[0.05,6,0.5]", "-m", f"CC[{template},{inpt},1,3]", "-c", "[150x100x100x50x10,1e-6,5]", "--shrink-factors", "12x8x4x2x1", "--smoothing-sigmas", "4x3x2x1x0"
-                                "-t", "SyN[0.1,6,0.5]", "-m", f"CC[{template},{inpt},1,5]", "-c", "[150x100x100x50,1e-6,5]", "--shrink-factors", "12x8x4x2", "--smoothing-sigmas", "4x3x2x1"
+                                "-t", "rigid[0.2]", "-m", f"MI[{template},{inpt},1,32,Regular,0.25]", *rigid_params,
+                                "-t", "Affine[0.25]", "-m", f"MI[{template},{inpt},1,32,Regular,0.5]", *rigid_params,
+                                #"-t", "Affine[0.25]", "-m", f"MeanSquares[{template},{inpt},1,15,Regular,0.35]", *rigid_params,
+                                # "-t", "SyN[0.05,6,0.5]", "-m", f"CC[{template},{inpt},1,3]", "-c", "[150x100x100x50x10,1e-6,5]", "--shrink-factors", "12x8x4x2x1", "--smoothing-sigmas", "4x3x2x1x0",
+                                # "-t", "SyN[0.1,6,0.5]", "-m", f"CC[{template},{inpt},1,5]", "-c", "[150x100x100x50,1e-6,5]", "--shrink-factors", "12x8x4x2", "--smoothing-sigmas", "4x3x2x1"
+                                "-t", "SyN[0.1,6,0.5]", "-m", f"CC[{template},{inpt},1,5]", "-c", "[150x150x100x100x50,1e-6,5]", "--shrink-factors", "16x12x8x4x2", "--smoothing-sigmas", "5x4x3x2x2",
                                ], stdout=sys.stdout, stderr=sys.stderr, check=True)
         print("#" * 10, '\n')
 

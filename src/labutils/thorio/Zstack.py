@@ -54,9 +54,11 @@ class ZExp(_ThorExp):
         for child in xml.getroot():
             if child.tag == "Date":
                 md['time'] = int(child.get("uTime"))
+            elif child.tag == "Magnification":
+                mag = float(child.get("mag"))
             elif child.tag == "LSM":
                 size = (int(child.get("pixelY")), int(child.get("pixelX")))
-                px2um = float(child.get("pixelSizeUM"))
+                px2um = self.pixelSizeUM#float(child.get("pixelSizeUM"))
             elif child.tag == "ZStage":
                 steps = int(child.get("steps"))
                 z2um = -float(child.get("stepSizeUM"))
