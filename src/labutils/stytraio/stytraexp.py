@@ -37,6 +37,8 @@ class Stytraexp(object):
                     self.keys.append(k)
             self.save_cache()
         self.projmat = np.array(self.md['stimulus']['calibration_params']['proj_to_cam'])
+        if self.projmat == 0:
+            self.projmat = np.ones((2,3))
         self.mdd = self.projmat @ np.array([*self.md['stimulus']['display_params']['size'], 1.0])
         self.fs = 1 / np.diff(self.t).mean()
 
