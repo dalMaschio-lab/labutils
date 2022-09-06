@@ -44,12 +44,14 @@ def load_s2p_data(s2pdir, nplanes):
         cells = []
         pos = []
         ops = {}
-        for p in range(nplanes):
+        for p in range(1, nplanes):
+            print(f"loading plane {p}")
             op = np.load(os.path.join(s2pdir, f"plane{p}", "ops.npy"), allow_pickle=True).tolist()
             cell = np.load(os.path.join(s2pdir, f"plane{p}", "F.npy"), allow_pickle=True)
             stat = np.load(os.path.join(s2pdir, f"plane{p}", "stat.npy"), allow_pickle=True)
-            cells.append(cell)
-            pos.extend([np.stack((st['xpix'], st['ypix'], [p] * st['npix'])).mean(axis=1) for st in stat])
+            if len(cell):
+                cells.append(cell)
+                pos.extend([np.stack((st['xpix'], st['ypix'], [p] * st['npix'])).mean(axis=1) for st in stat])
             ops.setdefault("meanImg", []).append(op["meanImg"])
         ops["meanImg"] = np.stack(ops["meanImg"])
         return np.concatenate(cells), np.stack(pos), ops
