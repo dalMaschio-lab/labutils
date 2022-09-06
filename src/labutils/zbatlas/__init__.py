@@ -3,7 +3,7 @@ import numpy as np
 
 
 class BrainRegion(object):
-    def __init__(self, name, path, parent=None, children=None, color=None, broken_stl=True, flip_normal=False):
+    def __init__(self, name, path, k, parent=None, children=None, color=None, broken_stl=True, flip_normal=False):
         self.name = name
         self.path = path
         self.parent = parent
@@ -12,6 +12,7 @@ class BrainRegion(object):
         self.broken_stl = broken_stl
         self.flip_normal = flip_normal
         self.color = color
+        self.idx = k
     
     @property
     def mesh(self):
@@ -57,7 +58,7 @@ class MPIN_Atlas:
             reg = json.load(fd)["data"]
         self.hierarchy = self._open_h(reg['regions_hierarchy'])
         self.regions = {
-            0: BrainRegion("outside", None, broken_stl=True, color="#000000"),
+            0: BrainRegion("outside", None, 0, broken_stl=True, color="#000000"),
             }
         reg['regions_dictionary']['1'] = {
             'name': 'brain',
@@ -86,7 +87,7 @@ class MPIN_Atlas:
                     broken_stl = False
 
                 self.regions[int(k)] = BrainRegion(
-                    i['name'], r_path,
+                    i['name'], r_path, int(k),
                     parent=i['parent'] if i['parent'] is None or i['parent'] > 0 else 1, children=i['sub_regions_ids'],
                     color=i['visualization_data']['color'], broken_stl=broken_stl, flip_normal=(int(k)>1)
                 )
