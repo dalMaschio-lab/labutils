@@ -5,8 +5,8 @@ from scipy import interpolate
 
 class Stytraexp(object):
     tail_k_re = re.compile(r'f?([0-9])?_?theta_([0-9]+)')
-    def __init__(self, path, session_id, clip_first=50):
-        self.keys = ['t']
+    def __init__(self, path, session_id,):# clip_first=50):
+        self.keys = ['t', 'clip_first']
         self.cachefn = os.path.join(path, "{}_cache.npz")
         with open(os.path.join(path, f"{session_id}_metadata.json")) as fd:
             self.md = json.load(fd)
@@ -18,13 +18,16 @@ class Stytraexp(object):
             num_segments = self.md["tracking+fish_tracking"]["n_segments"]-1 if "tracking+fish_tracking" in self.md else self.md['tracking+tail_tracking']['n_output_segments']
             hd, data = self.load_csv(os.path.join(path, f"{session_id}_behavior_log.csv"))
             hs, stim = self.load_csv(os.path.join(path, f"{session_id}_stimulus_log.csv"))
-            data = data[clip_first:, ...]
+            self.clip_first = np.argwhere(data[:,hd['t']] >= 0)[0][0]
+            print(f"tracking 0 found at: {self.clip_first}")
+            data = data[self.clip_first:, ...]
             t = data[:,hd['t']]
-            idx = self.find_closest_time(t, stim[:,hs['t']])
-            stim_ondata = stim[idx, ...]
+            # idx = self.find_closest_time(t, stim[:,hs['t']])
+            # stim_ondata = stim[idx, ...]
             self.t = np.linspace(t[0], t[-1], t.size)
-            for keys, arr in ((hd, data),(hs, stim_ondata)):
-                arr = interpolate.interp1d(t, arr, axis=0, assume_sorted=True)(self.t)
+            for keys, arr in ((hd, data),(hs, stim)):
+                t_prime = arr[:,keys['t']].copy()
+                arr = interpolate.interp1d(t_prime, arr, axis=0, assume_sorted=True, bounds_error=False)(self.t)
                 for k, i in keys.items():
                     if k == 't':
                         continue
@@ -37,7 +40,7 @@ class Stytraexp(object):
                     self.keys.append(k)
             self.save_cache()
         self.projmat = np.array(self.md['stimulus']['calibration_params']['proj_to_cam'])
-        if self.projmat == 0:
+        if  self.projmat.shape != (2,3):
             self.projmat = np.ones((2,3))
         self.mdd = self.projmat @ np.array([*self.md['stimulus']['display_params']['size'], 1.0])
         self.fs = 1 / np.diff(self.t).mean()
