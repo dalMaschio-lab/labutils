@@ -44,7 +44,7 @@ class AutoFigure(object):
         self.style_ctx.__exit__(type, value, traceback)
         return False
 
-def quantify(data, ticks, colors, axes=None, width=.2, outlier=True, dbg=False):
+def quantify(data, ticks, colors, axes=None, width=.2, outlier=True, mann_alt='two-sided', dbg=False):
     (pvalmn := np.empty((len(ticks), len(ticks)))).fill(np.NaN)
     if axes is None:
         axes = plt.gca()
@@ -67,11 +67,11 @@ def quantify(data, ticks, colors, axes=None, width=.2, outlier=True, dbg=False):
         for couple in it.combinations(range(len(ticks)),2):
             try:
                 if outlier:
-                    _, pval = stats.mannwhitneyu(data[couple[0]], data[couple[1]])
+                    _, pval = stats.mannwhitneyu(data[couple[0]], data[couple[1]], alternative=mann_alt)
                 else:
                     pcs = [np.percentile(data[c], (5,95)) for c in couple]
                     dts = [[d for d in data[c] if pc[0]<d<pc[1]] for c, pc in zip(couple, pcs)]
-                    _, pval = stats.mannwhitneyu(dts[0], dts[1])
+                    _, pval = stats.mannwhitneyu(dts[0], dts[1], alternative=mann_alt)
             except ValueError as e:
                 print(e, " setting pval to 1.0")
                 pval = 1.0
