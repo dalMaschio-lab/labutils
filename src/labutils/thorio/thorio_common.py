@@ -21,7 +21,7 @@ class _ThorExp(object):
     md_json = "metadata.json"
     md_xml = "Experiment.xml"
     cache_npz = "cache.npz"
-    pixelSizeUM = 0.7
+    pixelSizeUM = 0.75
     def __init__(self, path, parent: _Model, nplanes=0., cachefn=[]):
         self.path = path
         self.parent = parent

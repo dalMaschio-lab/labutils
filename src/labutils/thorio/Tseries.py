@@ -48,11 +48,11 @@ class TExp(_ThorExp):
                 md['time'] = int(child.get("uTime"))
             elif child.tag == "Timelapse":
                 md['totframes'] = int(child.get("timepoints"))
-            elif child.tag == "Magnification":
-                mag = float(child.get("mag"))
+            # elif child.tag == "Magnification":
+            #     mag = float(child.get("mag"))
             elif child.tag == "LSM":
                 size = (int(child.get("pixelY")), int(child.get("pixelX")))
-                px2um = self.pixelSizeUM#float(child.get("pixelSizeUM"))
+                px2um = float(child.get("pixelSizeUM"))
                 f2s = nplanes / float(child.get("frameRate"))
         md['shape'] = (md['totframes']//nplanes, nplanes, *size)
         md['px2units'] = (f2s, 1, 1e-3*px2um, 1e-3*px2um)

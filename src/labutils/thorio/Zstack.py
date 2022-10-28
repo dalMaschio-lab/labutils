@@ -54,11 +54,11 @@ class ZExp(_ThorExp):
         for child in xml.getroot():
             if child.tag == "Date":
                 md['time'] = int(child.get("uTime"))
-            elif child.tag == "Magnification":
-                mag = float(child.get("mag"))
+            # elif child.tag == "Magnification":
+            #     mag = float(child.get("mag"))
             elif child.tag == "LSM":
                 size = (int(child.get("pixelY")), int(child.get("pixelX")))
-                px2um = self.pixelSizeUM#float(child.get("pixelSizeUM"))
+                px2um = float(child.get("pixelSizeUM"))
             elif child.tag == "ZStage":
                 steps = int(child.get("steps"))
                 z2um = -float(child.get("stepSizeUM"))
@@ -68,4 +68,4 @@ class ZExp(_ThorExp):
         self.md.update(**md)
 
     def _get_flipaxes(self):
-        return [slice(None, None, -1 if flip else None) for flip in self.flipax]
+        return tuple(slice(None, None, -1 if flip else None) for flip in self.flipax)
