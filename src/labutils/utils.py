@@ -1,5 +1,6 @@
 import numpy as np
 from skimage import transform
+from scipy import optimize
 import re, os
 
 def corrcoef_f(x, y=None, rowvar=True, dtype=None):
@@ -16,6 +17,56 @@ def binarize(data, axis=1, stds=2.5):
     bin_threshold = stds * (total_std + np.tile(median.reshape(-1,1), (1, data.shape[axis])))
     return data > bin_threshold, bin_threshold
 
+def ca2p_transient(t, A, t0, ca2_off, ca2_on):
+    tp = t-t0
+    return A*np.exp(np.min((tp/ca2_on, tp/-ca2_off), axis=0))
+
+def ca2p_peeling(cellsF, fs, thresholds, maxpeaks=5):
+    t = np.linspace(0, cellsF.shape[-1]/fs, cellsF.shape[-1])
+    transient = ca2p_transient
+    cells_params = np.zeros((cellsF.shape[0], maxpeaks, 4))
+    cells_params[:, :, 1].fill(np.Inf)
+    for cellF, params, threshold in zip(cellsF, cells_params, thresholds):
+        cell = cellF.copy()
+        for i in range(maxpeaks+1):
+            if i==maxpeaks or (tmp:=cell.max()) <= threshold:
+                break
+            params[i] = (tmp*1.2, cell.argmax()/fs, 2.8, 2.0)
+            # plt.plot(t,cell, c=f"C{i}")
+            # plt.plot(t, transient(t, *params[i]), c=f"C{i}", ls="--")
+            cell -= transient(t, *params[i])
+        if i:
+            multi_transient = lambda t, *args: np.sum([transient(t, *args[j*4:(j+1)*4]) for j in range(i)], axis=0)
+            # print(params[:i])
+            params[:i].flat, _, = optimize.curve_fit(
+                multi_transient,
+                t, cellF, 
+                params[:i].flatten(),
+                bounds=(np.array((0,0,.2,.4)*i), np.array((cellF.max()*1.2,t[-1],3.,2.1)*i)),
+                loss='linear'
+            )
+            # print(params[:i])
+    return cells_params
+
+    # curv=np.zeros_like(fold_zscore[cidx,stimidx,:])
+    # params=np.zeros((4,4))
+    # params[:, 2:].fill(1)
+    # plt.figure()
+    # for i in range(4):
+    #     # print(i, curv.max(), curv.std(), curv.mean(), curv.sum())
+    #     if (tmp:=fold_zscore[cidx,stimidx,:]-curv).max() <1.6:#curv.max() <= bin_th[cidx,pt]:
+    #         break
+    #     params[i], _, = optimize.curve_fit(
+    #         lambda t, A, t0, ca_off, ca_on: transientit(t, A, t0, ca_off, ca_on, curv),
+    #         t, fold_zscore[cidx,stimidx,:], 
+    #         (1,tmp.argmax()/fs,1.7,.42),
+    #         bounds=(np.array((0,0,.2,.4)), np.array(((tmp.max(),t[-1],2.8,1.4)))),
+    #         loss='linear'
+    #     )
+    #     curv+= (res:=transient(t, *params[i]))
+    #     plt.plot(t, tmp, c=f"C{i}")
+    #     plt.plot(t, res, c=f"C{i}", ls="--")
+
 def times2convregress_(regressors: np.ndarray, fr: float, ca2_off: float=7.8, ca2_on: float=1.4, ca2_delay=5.6):
     transient = np.hstack((np.zeros(round((ca2_delay + ca2_on) * fr)),
                           (np.exp(np.linspace(np.log(2), np.log(12), round(ca2_on * fr)))-2) / (12-2),
@@ -23,12 +74,7 @@ def times2convregress_(regressors: np.ndarray, fr: float, ca2_off: float=7.8, ca
     return np.stack([np.convolve(tev, transient, mode='same')/transient.sum() for tev in regressors], axis=0)
 
 def times2convregress(regressors: np.ndarray, fr: float, ca2_off: float=7.8, ca2_on: float=1.4, ca2_delay=5.6, baseoff=15):
-    transient = np.hstack((np.ones(round(ca2_delay * fr)) * (1/baseoff),
-                          np.exp(np.linspace(-np.log(baseoff), 0, round(ca2_on * fr)+1))[:-1],
-                          np.exp(np.linspace(0, -np.log(baseoff), round(ca2_off * fr))),))
-    transient -= (1/baseoff)
-    # not sure if this is correct
-    transient /= transient.sum()
+    transient = ca2p_transient(np.linspace(0., (ca2_on*2+ca2_off*2+ca2_delay)/fs), 1.0, ca2_delay, ca2_off, ca2_on)
     return np.stack([np.convolve(tev, transient, mode='full') for tev in regressors], axis=0)[:, :regressors.shape[1]]
 
 def detect_bidi_offset(image, offsets=np.arange(-25,25)):
