@@ -22,10 +22,18 @@ class ZExp(_ThorExp):
         try:
             self.img, header = nrrd.read(os.path.join(path, self.img_nrrd.format("")), custom_field_map=self.nrrd_fields)
             self.img = np.moveaxis(self.img, (0,1,2), self.axord2nrrd_d)[self._get_flipaxes()]
-            print(np.diag(header["space directions"]).tolist(), px2units_um.tolist())
             assert(np.diag(header["space directions"]).tolist() == px2units_um.tolist())
         except Exception as e:
             print(e)
+            # if isinstance(e, AssertionError):
+            #     print('old scale, fixing...')
+            #     print(np.diag(header["space directions"]).tolist(), px2units_um.tolist())
+            #     from .Alignment import AffineMat
+            #     import shutil
+            #     shutil.copy(f"{self.path}/z2live_0GenericAffine.mat", f"{self.path}/z2live_0GenericAffine_.mat")
+            #     tmp=AffineMat.load_from(f"{self.path}/z2live_0GenericAffine.mat")
+            #     tmp.scale(px2units_um / np.diag(header["space directions"]))
+            #     tmp.save(f"{self.path}/z2live_0GenericAffine.mat")
             print("fallback to tiffs")
             self.img = np.empty((self.md['shape']), dtype=np.uint16)
             # for i in range(self.shape[0]):

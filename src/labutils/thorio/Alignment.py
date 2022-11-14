@@ -3,7 +3,68 @@ from ..utils import _norm_u16stack2float
 from ..zbatlas import MPIN_Atlas
 import sys, os, tempfile, nrrd, numpy as np, subprocess #, zlib
 from skimage import feature
+from scipy import io
 # from functools import reduce
+
+class AffineMat(object):
+    def __init__(self):
+        self._fixed = np.zeros((3,1))
+        self._AffineTransform_float_3_3 = np.concatenate((np.diag((1.,1.,1.)), np.zeros((1,3)))).reshape((12,1))
+
+    @property
+    def translation(self):
+        return self._AffineTransform_float_3_3.reshape((4,-1))[-1, :]
+    @translation.setter
+    def translation(self, v):
+        self._AffineTransform_float_3_3.reshape((4,-1))[-1, :] = v
+
+    @property
+    def matrix(self):
+        return self._AffineTransform_float_3_3.reshape((4,-1))[:-1, :]
+    @matrix.setter
+    def matrix(self, m):
+        self._AffineTransform_float_3_3.reshape((4,-1))[:-1, :] = m
+
+    @property
+    def center(self):
+        return self._fixed.reshape(-1)[:]
+    @center.setter
+    def center(self, v):
+        self._fixed.reshape(-1)[:] = v
+
+    @property
+    def offset(self):
+        return self.translation + self.center - self.matrix @ self.center
+    @offset.setter
+    def offset(self, o, change='translation'):
+        if change == 'translation':
+            self.translation = o - self.center + self.matrix @ self.center
+        else:
+            raise NotImplementedError()
+
+    @staticmethod
+    def load_from(fn):
+        tmp = io.matlab.loadmat(fn)
+        tmpself = AffineMat()
+        tmpself._fixed = tmp['fixed']
+        tmpself._AffineTransform_float_3_3 = tmp['AffineTransform_float_3_3']
+        return tmpself
+
+    def save(self, fn):
+        out = dict(
+            AffineTransform_float_3_3=self._AffineTransform_float_3_3.astype(np.float32),
+            fixed=self._fixed.astype(np.float32),
+            )
+        io.matlab.savemat(fn, out, format='4')
+
+    def scale(self, sv):
+        mat = self.matrix.copy()
+        offset = self.offset.copy()
+        chainmat = np.diag(sv)
+        self.matrix = chainmat @ mat
+        self.offset = chainmat @ offset
+        return self
+
 
 class AlignableRigidPlaneData:
     def __init__(self, *args, alignTo: (None, ZExp)=None, **kwargs):
@@ -98,12 +159,12 @@ class AlignableVolumeData:
                                 "--winsorize-image-intensities", "[0.005,0.995]",
                                 "--use-histogram-matching", "0",
                                 "-r", f"[{template},{inpt},1]",
-                                "-t", "rigid[0.2]", "-m", f"MI[{template},{inpt},1,32,Regular,0.25]", *rigid_params,
-                                "-t", "Affine[0.25]", "-m", f"MI[{template},{inpt},1,32,Regular,0.5]", *rigid_params,
+                                "-t", "rigid[0.15]", "-m", f"MI[{template},{inpt},1,32,Regular,0.25]", *rigid_params,
+                                "-t", "Affine[0.15]", "-m", f"MI[{template},{inpt},1,32,Regular,0.5]", *rigid_params,
                                 #"-t", "Affine[0.25]", "-m", f"MeanSquares[{template},{inpt},1,15,Regular,0.35]", *rigid_params,
                                 # "-t", "SyN[0.05,6,0.5]", "-m", f"CC[{template},{inpt},1,3]", "-c", "[150x100x100x50x10,1e-6,5]", "--shrink-factors", "12x8x4x2x1", "--smoothing-sigmas", "4x3x2x1x0",
                                 # "-t", "SyN[0.1,6,0.5]", "-m", f"CC[{template},{inpt},1,5]", "-c", "[150x100x100x50,1e-6,5]", "--shrink-factors", "12x8x4x2", "--smoothing-sigmas", "4x3x2x1"
-                                "-t", "SyN[0.1,6,0.5]", "-m", f"CC[{template},{inpt},1,5]", "-c", "[150x150x100x100x50,1e-6,5]", "--shrink-factors", "16x12x8x4x2", "--smoothing-sigmas", "5x4x3x2x2",
+                                "-t", "SyN[0.1,6,0.5]", "-m", f"CC[{template},{inpt},1,5]", "-c", "[150x150x100x75x25,1e-6,5]", "--shrink-factors", "16x12x8x4x2", "--smoothing-sigmas", "5x4x3x2x2",
                                ], stdout=sys.stdout, stderr=sys.stderr, check=True)
         print("#" * 10, '\n')
 
