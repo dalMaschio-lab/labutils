@@ -75,7 +75,7 @@ def quantify(data, ticks, colors, axes=None, width=.2, outlier=True, mann_alt='t
             except ValueError as e:
                 print(e, " setting pval to 1.0")
                 pval = 1.0
-            make_sigbar(pval, couple, max(datacol.max() for datacol in data), axis=axes, pos=couple[1]-couple[0], dbg=dbg)
+            make_sigbar(pval, couple, max(datacol[np.isfinite(datacol)].max() for datacol in data), axis=axes, pos=couple[1]-couple[0], dbg=dbg)
             pvalmn[couple[0], couple[1]] = pval
         pvalk = stats.kruskal(*data)[1]
     return pvalmn, pvalk, *zip(*[(d.mean(), d.std()) for d in data])
