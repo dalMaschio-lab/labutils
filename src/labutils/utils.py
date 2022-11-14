@@ -39,22 +39,30 @@ def detect_bidi_offset(image, offsets=np.arange(-25,25)):
     # find for each line the lowest score, then count how many occurences there are for any offset and get the most represented
     return offsets[np.bincount((offsetscores.argmin(axis=0))).argmax()]
 
-def load_s2p_data(s2pdir, nplanes):
+def load_s2p_data(s2pdir, nplanes, doneuropil=False):
     for pidx in range(nplanes):
         cells = []
+        neuropils = []
         pos = []
         ops = {}
-        for p in range(1, nplanes):
+        for p in range(0 if nplanes>1 else 1, nplanes):
             print(f"loading plane {p}")
             op = np.load(os.path.join(s2pdir, f"plane{p}", "ops.npy"), allow_pickle=True).tolist()
             cell = np.load(os.path.join(s2pdir, f"plane{p}", "F.npy"), allow_pickle=True)
+            neuropil = np.load(os.path.join(s2pdir, f"plane{p}", "Fneu.npy"), allow_pickle=True)
             stat = np.load(os.path.join(s2pdir, f"plane{p}", "stat.npy"), allow_pickle=True)
             if len(cell):
                 cells.append(cell)
+                neuropils.append(neuropil)
                 pos.extend([np.stack((st['xpix'], st['ypix'], [p] * st['npix'])).mean(axis=1) for st in stat])
             ops.setdefault("meanImg", []).append(op["meanImg"])
         ops["meanImg"] = np.stack(ops["meanImg"])
-        return np.concatenate(cells), np.stack(pos), ops
+        if doneuropil:
+            cells = np.concatenate(cells)
+            cells -= np.tile(np.concatenate(neuropils).mean(axis=0) * .7, (cells.shape[0], 1))
+            return cells, np.stack(pos), ops
+        else:
+            return np.concatenate(cells), np.stack(pos), ops
 
 def find_fish(folder, gcamp=(6, 7)):
     fish_re = re.compile('([0-9]+)_([A-Z]+)[0-9]+_G([{}])'.format("".join(map(str, gcamp))))

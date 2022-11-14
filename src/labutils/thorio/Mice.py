@@ -20,6 +20,7 @@ class OdorEvokedTExp(TExp):
     stim_type_conversion = {4: 'mix', 5: 'oil'}
     def __init__(self, path, parent, stimulus_npy_file, **kwargs):
         self.stim_file = stimulus_npy_file
+        self.doneuropil=False
         super().__init__(path, parent, **kwargs)
 
     def _import_xml(self, **kwargs):

@@ -6,6 +6,7 @@ import os, copy, time
 
 
 class TExp(_ThorExp):
+    doneuropil=False
     ops = {
         'fast_disk': os.path.expanduser("~/.suite2p/"),
         'batch_size': 200,
@@ -29,9 +30,9 @@ class TExp(_ThorExp):
         'nonrigid': False,
     }
     data_raw = 'Image_001_001.raw'
-    def __init__(self, *args, **kwargs):
+    def __init__(self, path, parent, nplanes=1, **kwargs):
         kwargs.setdefault('cachefn', []).append((('cells', 'pos', 'meanImg'), self._load_s2p_data))
-        super().__init__(*args, **kwargs)
+        super().__init__(path, parent, nplanes=1, **kwargs)
         self.img = None
         self.clip_start = self.md.get('clip_start', 0)
         if self.clip_start > self.md['shape'][0]:
@@ -62,7 +63,7 @@ class TExp(_ThorExp):
 
     def _load_s2p_data(self):
         try:
-            cells, pos, ops = load_s2p_data(os.path.join(self.path, self.ops['save_folder']), self.md['shape'][1])
+            cells, pos, ops = load_s2p_data(os.path.join(self.path, self.ops['save_folder']), self.md['shape'][1], doneuropil=self.doneuropil)
         except FileNotFoundError as e:
             print(f"tseries {self.path} is missing segmentetion, run s2p")
             ops = self._run_s2p()[0]
@@ -88,7 +89,7 @@ class TExp(_ThorExp):
         ops['data_path'] = self.path
         ops['nplanes'] = self.md['shape'][1]
         ops['Ly'] = self.md['shape'][-2]
-        ops['Lx'] = self.md['shape'][-1]
+        ops['Lx'] = self.md['shape'][-1] #longside
         ops['fs'] = 1 / self.md['px2units'][0]
         ops['nframes'] = clipped_len
         ops['save_path0'] = ops['data_path']
@@ -133,13 +134,6 @@ class TExp(_ThorExp):
                     shape=(clipped_len,*self.md['shape'][-2:])
                     )
                 bidi_frac_tot=8
-                # bidi_frac = [
-                #     slice(
-                #         int(-i * ops['Lx'] //(2*bidi_frac_tot))-1,
-                #         int(-(i-1) * ops['Lx'] //(2*bidi_frac_tot))-1 if i-1 else None
-                #     )
-                #     for i in range(1, bidi_frac_tot + 1)
-                # ]
                 bidi_frac = [
                     slice(
                         (i - 1) * ops['Lx'] // bidi_frac_tot,
@@ -153,7 +147,6 @@ class TExp(_ThorExp):
                         tp = time.time()
                         print("----------- BIDIPHASE CORRECTION")
                         slicebidi = slice((clipped_len//5),(3*clipped_len//5),(2*clipped_len//(5*230)))
-                        # print(f"bidiphase {slicebidi} fracs {bidi_frac}")
                         opsp["bidiphase"] = []
                         for fraction in bidi_frac:
                             opsp["bidiphase"].append(detect_bidi_offset(
