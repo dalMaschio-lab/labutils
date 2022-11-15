@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "labutils"
+version = "0.1"
+authors = [
+  { name="Marica", email="albama92@gmail.com" },
+]
+description = "Utilities for imaging lab"
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "matplotlib",
+    "scipy",
+    "scikit-image",
+    "vedo",
+    "scikit-learn",
+    "requests",
+    "pynrrd",
+    "suite2p",
+    "cellpose",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/dalMaschio-lab/labutils"
+"Bug Tracker" = "https://github.com/dalMaschio-lab/labutils/issues"
