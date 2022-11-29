@@ -39,6 +39,7 @@ class AutoFigure(object):
                 [self.figure.savefig(self.path + fmt, transparent=self.transparent) for fmt in self.format]
             else:
                 self.figure.savefig(self.path + self.format, transparent=self.transparent)
+            plt.close(self.figure)
         else:
             plt.show(block=self.block)
         self.style_ctx.__exit__(type, value, traceback)
@@ -95,6 +96,9 @@ def make_sigbar(pval, xticks, ypos, axis=None, pos=0, log=False, dbg=False):
         except (OverflowError, ZeroDivisionError) as e:
             print(e, "\n", "setting pval stars to inf")
             pval = "$\\infty$"
+        except ValueError as e:
+            print(e, "\n", "setting pval to NaN")
+            pval = "NaN"
     else:
         pval = f"{pval:.3f}"
     txt = axis.text(sum(xticks,0)/2, ypos + ytick, pval if pval else "")
