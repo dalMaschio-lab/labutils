@@ -36,15 +36,20 @@ def ca2p_peeling(cellsF, fs, thresholds, maxpeaks=5):
             # plt.plot(t, transient(t, *params[i]), c=f"C{i}", ls="--")
             cell -= transient(t, *params[i])
         if i:
-            multi_transient = lambda t, *args: np.sum([transient(t, *args[j*4:(j+1)*4]) for j in range(i)], axis=0)
-            # print(params[:i])
-            params[:i].flat, _, = optimize.curve_fit(
-                multi_transient,
-                t, cellF, 
-                params[:i].flatten(),
-                bounds=(np.array((0,0,.2,.4)*i), np.array((cellF.max()*1.2,t[-1],3.,2.1)*i)),
-                loss='linear'
-            )
+            try:
+                multi_transient = lambda t, *args: np.sum([transient(t, *args[j*4:(j+1)*4]) for j in range(i)], axis=0)
+                # print(params[:i])
+                params[:i].flat, _, = optimize.curve_fit(
+                    multi_transient,
+                    t, cellF, 
+                    params[:i].flatten(),
+                    bounds=(np.array((0,0,.2,.4)*i), np.array((cellF.max()*1.2,t[-1],3.,2.1)*i)),
+                    loss='linear'
+                )
+            except (RuntimeError, RuntimeError) as e:
+                params = np.tile([[0, np.Inf, 0, 0]], (maxpeaks, 1))
+                print(f"Error {e} while optimizing")
+
             # print(params[:i])
     return cells_params
 
@@ -86,29 +91,28 @@ def detect_bidi_offset(image, offsets=np.arange(-25,25)):
     return offsets[np.bincount((offsetscores.argmin(axis=0))).argmax()]
 
 def load_s2p_data(s2pdir, nplanes, doneuropil=False):
-    for pidx in range(nplanes):
-        cells = []
-        neuropils = []
-        pos = []
-        ops = {}
-        for p in range(0 if nplanes>1 else 1, nplanes):
-            print(f"loading plane {p}")
-            op = np.load(os.path.join(s2pdir, f"plane{p}", "ops.npy"), allow_pickle=True).tolist()
-            cell = np.load(os.path.join(s2pdir, f"plane{p}", "F.npy"), allow_pickle=True)
-            neuropil = np.load(os.path.join(s2pdir, f"plane{p}", "Fneu.npy"), allow_pickle=True)
-            stat = np.load(os.path.join(s2pdir, f"plane{p}", "stat.npy"), allow_pickle=True)
-            if len(cell):
-                cells.append(cell)
-                neuropils.append(neuropil)
-                pos.extend([np.stack((st['xpix'], st['ypix'], [p] * st['npix'])).mean(axis=1) for st in stat])
-            ops.setdefault("meanImg", []).append(op["meanImg"])
-        ops["meanImg"] = np.stack(ops["meanImg"])
-        if doneuropil:
-            cells = np.concatenate(cells)
-            cells -= np.tile(np.concatenate(neuropils).mean(axis=0) * .7, (cells.shape[0], 1))
-            return cells, np.stack(pos), ops
-        else:
-            return np.concatenate(cells), np.stack(pos), ops
+    cells = []
+    neuropils = []
+    pos = []
+    ops = {}
+    for p in range(0 if nplanes==1 else 1, nplanes):
+        print(f"loading plane {p}")
+        op = np.load(os.path.join(s2pdir, f"plane{p}", "ops.npy"), allow_pickle=True).tolist()
+        cell = np.load(os.path.join(s2pdir, f"plane{p}", "F.npy"), allow_pickle=True)
+        neuropil = np.load(os.path.join(s2pdir, f"plane{p}", "Fneu.npy"), allow_pickle=True)
+        stat = np.load(os.path.join(s2pdir, f"plane{p}", "stat.npy"), allow_pickle=True)
+        if len(cell):
+            cells.append(cell)
+            neuropils.append(neuropil)
+            pos.extend([np.stack((st['xpix'], st['ypix'], [p] * st['npix'])).mean(axis=1) for st in stat])
+        ops.setdefault("meanImg", []).append(op["meanImg"])
+    ops["meanImg"] = np.stack(ops["meanImg"])
+    if doneuropil:
+        cells = np.concatenate(cells)
+        cells -= np.tile(np.concatenate(neuropils).mean(axis=0) * .7, (cells.shape[0], 1))
+        return cells, np.stack(pos), ops
+    else:
+        return np.concatenate(cells), np.stack(pos), ops
 
 def find_fish(folder, gcamp=(6, 7)):
     fish_re = re.compile('([0-9]+)_([A-Z]+)[0-9]+_G([{}])'.format("".join(map(str, gcamp))))
