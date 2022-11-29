@@ -15,8 +15,8 @@ class TExp(_ThorExp):
         'bidiphase': None,
         'spikedetect': False,
         #'diameter': 6,
-        'cellprob_threshold': -5.,
-        'flow_threshold': .4,
+        'cellprob_threshold': -1.,
+        'flow_threshold': .55,
         'sparse_mode': True,
         'neuropil_extract': False,
         'save_folder': 'suite2p',
@@ -123,6 +123,7 @@ class TExp(_ThorExp):
                 opspp = np.load(opsp['ops_path'], allow_pickle=True).tolist()
                 for k in ['fast_disk', 'reg_file', 'save_path', 'spikedetect']:
                     opspp[k] = opsp[k]
+                opspp.update(self.ops)
                 np.save(opsp['ops_path'], opspp)
                 opspp['do_registration'] = False
                 opsp = opspp

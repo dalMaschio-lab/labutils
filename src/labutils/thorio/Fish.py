@@ -26,6 +26,7 @@ class Fish(_Model):
         self.Z = AlignableZExp(os.path.join(path, "Z"), self, alignTo=zbatlas, flipax=md.get('z_flipax', (False, False, False)))
         AlignableTExp.ops = dict(
             diameter=7,
+            pretrained_model='ZF_H2BG6S_neo-vX',
             tau=5. if self.md['gcamp'] == "7" else 9.,
             **TExp.ops,
         )
