@@ -1,4 +1,4 @@
-from .thorio_common import _ThorExp
+from .thorio_common import _ThorExp, MemoizedProperty
 import numpy as np
 from xml.etree import ElementTree as EL
 import os, nrrd, tifffile
@@ -11,54 +11,34 @@ import os, nrrd, tifffile
 class ZExp(_ThorExp):
     img_tiff = "ChanC_001_001_{:>03d}_001.tif"
     img_nrrd = "ChanC_001_001{}.nrrd"
-    nrrd_fields = None
-    axord2nrrd_d = (1,2,0)
-    axord2nrrd_i = (2,0,1)
-    def __init__(self, path, parent, flipax=(False, False, False)):
+    _base_md = {
+        'time': 0,
+        'shape': None,
+        'px2units': None,
+        'units': ('m', 'm', 'm'),
+        'flipax': (False, False, False),
+    }
+    def __init__(self, path, parent, **kwargs):
         super().__init__(path, parent)
         print(f"loading Z image data at {path}...")
-        self.flipax = flipax
-        px2units_um = np.array(list(map(lambda x: np.round(x*1e3,3), self.md['px2units'])))[self.axord2nrrd_d,]
-        try:
-            self.img, header = nrrd.read(os.path.join(path, self.img_nrrd.format("")), custom_field_map=self.nrrd_fields)
-            self.img = np.moveaxis(self.img, (0,1,2), self.axord2nrrd_d)[self._get_flipaxes()]
-            assert(np.diag(header["space directions"]).tolist() == px2units_um.tolist())
-        except Exception as e:
-            print(e)
-            # if isinstance(e, AssertionError):
-            #     print('old scale, fixing...')
-            #     print(np.diag(header["space directions"]).tolist(), px2units_um.tolist())
-            #     from .Alignment import AffineMat
-            #     import shutil
-            #     shutil.copy(f"{self.path}/z2live_0GenericAffine.mat", f"{self.path}/z2live_0GenericAffine_.mat")
-            #     tmp=AffineMat.load_from(f"{self.path}/z2live_0GenericAffine.mat")
-            #     tmp.scale(px2units_um / np.diag(header["space directions"]))
-            #     tmp.save(f"{self.path}/z2live_0GenericAffine.mat")
-            print("fallback to tiffs")
-            self.img = np.empty((self.md['shape']), dtype=np.uint16)
-            # for i in range(self.shape[0]):
-            #     img[i,...] = tifffile.TiffFile(os.path.join(path, self.TIFF_FN.format(i+1))).asarray()
-            print("reading tiffs...")
-            self.img[...] = tifffile.TiffFile(os.path.join(path, self.img_tiff.format(1))).asarray()
-            outtype = np.uint8 if (ptp := np.ptp(self.img)) < np.iinfo(np.uint8).max else np.uint16
-            self.img = (np.iinfo(outtype).max/ptp * (self.img - self.img.min())).astype(outtype)
-            header = {"space dimension": 3, "space units": ["microns", "microns", "microns"],"space directions": np.diag(px2units_um)}
-            nrrd.write(
-                os.path.join(path, self.img_nrrd.format("")),
-                np.moveaxis(self.img[self._get_flipaxes()], (0,1,2), self.axord2nrrd_i),
-                header=header
-            )
-        self.px2units_um = px2units_um[self.axord2nrrd_i,]
-        try:
-            assert(tuple(self.img.shape) == tuple(self.md['shape']))
-        except AssertionError as e:
-            print(self.img.shape, self.md['shape'])
-            print(type(self.img.shape), type(self.md['shape']))
-            raise e
+        self._base_md.update({k: kwargs[k] for k in kwargs if k in ZExp._base_md})
+        px2units_um = np.array(list(map(lambda x: np.round(x*1e3,3), self.md['px2units'])))[(2,1,0),]
+        self.nrrd_header = {"space dimension": 3, "space units": ["microns", "microns", "microns"], "space directions": np.diag(px2units_um)}
 
-    def _import_xml(self, nplanes):
+
+    @MemoizedProperty('array')
+    def img(self):
+        img = np.empty((self.md['shape']), dtype=np.uint16)
+        print("reading tiffs...")
+        img[...] = tifffile.TiffFile(os.path.join(self.path, self.img_tiff.format(1))).asarray()[self._get_flipaxes()]
+        # outtype = np.uint8 if (ptp := np.ptp(img)) < np.iinfo(np.uint8).max else np.uint16
+        # img = (np.iinfo(outtype).max/ptp * (img - img.min())).astype(outtype)
+        return img
+
+    @MemoizedProperty('json')
+    def md(self):
         xml = EL.parse(os.path.join(self.path, self.md_xml))
-        md = {}
+        md = {**self._base_md}
         for child in xml.getroot():
             if child.tag == "Date":
                 md['time'] = int(child.get("uTime"))
@@ -71,9 +51,8 @@ class ZExp(_ThorExp):
                 steps = int(child.get("steps"))
                 z2um = -float(child.get("stepSizeUM"))
         md['shape'] = (steps, *size)
-        md['px2units'] = (1e-3*z2um, 1e-3*px2um, 1e-3*px2um)
-        md['units'] = ('m', 'm', 'm')
-        self.md.update(**md)
+        md['px2units'] = (1e-3*z2um, 1e-3*px2um, 1e-3*px2um, )
+        return md
 
     def _get_flipaxes(self):
-        return tuple(slice(None, None, -1 if flip else None) for flip in self.flipax)
+        return tuple(slice(None, None, -1 if flip else None) for flip in self.md['flipax'])

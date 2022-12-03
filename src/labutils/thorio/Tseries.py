@@ -1,4 +1,4 @@
-from .thorio_common import _ThorExp
+from .thorio_common import _ThorExp, MemoizedProperty
 from ..utils import load_s2p_data, detect_bidi_offset
 import numpy as np
 from xml.etree import ElementTree as EL
@@ -61,6 +61,31 @@ class TExp(_ThorExp):
         md['nplanes'] = nplanes
         self.md.update(**md)
 
+    @MemoizedProperty('array')
+    def Fraw_cells(self):
+        # TODO: extract from masks from motion corrected movie
+        return
+
+    @MemoizedProperty()
+    def Fzscore_cells(self):
+        # TODO: zscore ra F
+        return
+
+    @MemoizedProperty('array')
+    def meanImg(self):
+        #TODO: generate meanImg from motion corr data
+        return
+
+    @MemoizedProperty('array')
+    def masks_cells(self):
+        # TODO: run cellpose on meanImg and get masks
+        return
+
+
+
+    def img(self):
+        return
+    
     def _load_s2p_data(self):
         try:
             cells, pos, ops = load_s2p_data(os.path.join(self.path, self.ops['save_folder']), self.md['shape'][1], doneuropil=self.doneuropil)
