@@ -9,7 +9,7 @@ class rawTseries(np.memmap):
         if flyback and len(flyback) != len(shape) - 1:
             raise TypeError('flyback should be specfied for all axis except the first')
 
-        arr = np.memmap(filename, shape=shape, dtype=dtype, **kwargs).view(subtype)
+        arr = np.memmap(filename, shape=shape, dtype=dtype, mode='r', **kwargs).view(subtype)
         arr.flyback = flyback if flyback else (0, ) * (arr.ndim -1) 
         arr.transforms = transforms
         return arr
@@ -32,7 +32,7 @@ class rawTseries(np.memmap):
         k0, k = key[0], key[1:]
         tmp = self.view(np.memmap)[k0]
 
-        # rolling logic copied from np.roll
+        # sequential rolling logic to fix flybacks by using rolling logic
         for shift, axis in zip(self.flyback[::-1], range(tmp.ndim)):
             if shift:
                 out = np.empty_like(tmp)

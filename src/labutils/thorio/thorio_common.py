@@ -1,6 +1,5 @@
 import os, json
 import numpy as np
-from ..filecache import MemoizedProperty
 
 class _Model:
     md_json = "metadata.json"

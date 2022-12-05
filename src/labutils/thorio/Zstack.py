@@ -1,4 +1,5 @@
-from .thorio_common import _ThorExp, MemoizedProperty
+from .thorio_common import _ThorExp
+from ..filecache import MemoizedProperty, FMappedMetadata, FMappedArray
 import numpy as np
 from xml.etree import ElementTree as EL
 import os, nrrd, tifffile
@@ -23,10 +24,8 @@ class ZExp(_ThorExp):
         print(f"loading Z image data at {path}...")
         self._base_md.update({k: kwargs[k] for k in kwargs if k in ZExp._base_md})
         px2units_um = np.array(list(map(lambda x: np.round(x*1e3,3), self.md['px2units'])))[(2,1,0),]
-        self.nrrd_header = {"space dimension": 3, "space units": ["microns", "microns", "microns"], "space directions": np.diag(px2units_um)}
 
-
-    @MemoizedProperty('array')
+    @MemoizedProperty(FMappedArray)
     def img(self):
         img = np.empty((self.md['shape']), dtype=np.uint16)
         print("reading tiffs...")
@@ -35,7 +34,7 @@ class ZExp(_ThorExp):
         # img = (np.iinfo(outtype).max/ptp * (img - img.min())).astype(outtype)
         return img
 
-    @MemoizedProperty('json')
+    @MemoizedProperty(FMappedMetadata)
     def md(self):
         xml = EL.parse(os.path.join(self.path, self.md_xml))
         md = {**self._base_md}

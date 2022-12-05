@@ -1,49 +1,59 @@
 from .thorio_common import _ThorExp, MemoizedProperty
+from ..filecache import MemoizedProperty, FMappedMetadata, FMappedArray
 from ..utils import load_s2p_data, detect_bidi_offset
 import numpy as np
 from xml.etree import ElementTree as EL
 import os, copy, time
+from .mapwrap import rawTseries
+
+
+class FMapTMD(FMappedMetadata):
+    @property
+    def clip(self):
+        return tuple(slice(*c) for c in self._clip)
+
+    @clip.setter
+    def clip(self, value):
+        for i, (c, d) in enumerate(zip(value, self._shape), strict=True):
+            if type(c) is not tuple:
+                c = tuple(*c)
+            if abs(c.stop-c.start) > d:
+                raise ValueError(f"clipping axis {i} with {c} doesn't fit the axis size of {d}")
+        self._clip = tuple((c.start, c.stop) if type(c) is slice else c for c in value)
 
 
 class TExp(_ThorExp):
-    doneuropil=False
-    ops = {
-        'fast_disk': os.path.expanduser("~/.suite2p/"),
-        'batch_size': 200,
-        'anatomical_only': 2,
-        'do_bidiphase': True,
-        'bidiphase': None,
-        'spikedetect': False,
-        #'diameter': 6,
-        'cellprob_threshold': -1.,
-        'flow_threshold': .55,
-        'sparse_mode': True,
-        'neuropil_extract': False,
-        'save_folder': 'suite2p',
-        # rigid
-        'do_registration': 1,
-        'smooth_sigma_time': 2,  # gaussian smoothing in time
-        'smooth_sigma': 4.0,  # ~1 good for 2P recordings, recommend 3-5 for 1P recordings
-        'th_badframes': 1.0,  # this parameter determines which frames to exclude when determining cropping - set it smaller to exclude more frames
-        'norm_frames': True, # normalize frames when detecting shifts
-        'force_refImg': True, # if True, use refImg stored in ops if available
-        'nonrigid': False,
-    }
     data_raw = 'Image_001_001.raw'
-    def __init__(self, path, parent, nplanes=1, **kwargs):
-        kwargs.setdefault('cachefn', []).append((('cells', 'pos', 'meanImg'), self._load_s2p_data))
-        super().__init__(path, parent, nplanes=1, **kwargs)
-        self.img = None
-        self.clip_start = self.md.get('clip_start', 0)
+    _base_md = {
+        'time': 0,
+        'shape': None,
+        'px2units': None,
+        'units': ('m', 'm', 'm'),
+        'nplanes': 1,
+        'totframes': None,
+        'clip': None,
+    }
+    def __init__(self, path, parent, **kwargs):
+        super().__init__(path, parent)
+        print(f"loading Z image data at {path}...")
+        self._base_md.update({k: kwargs[k] for k in kwargs if k in ZExp._base_md})
+        px2units_um = np.array(list(map(lambda x: np.round(x*1e3,3), self.md['px2units'])))[(2,1,0),]
+        self.nrrd_header = {"space dimension": 3, "space units": ["microns", "microns", "microns"], "space directions": np.diag(px2units_um)}
+
+    def __init__(self, path, parent, **kwargs):
+        super().__init__(path, parent)
+        self._base_md.update({k: kwargs[k] for k in kwargs if k in TExp._base_md})
+        clip_check = self.md.get('clip_start', 0)
+
         if self.clip_start > self.md['shape'][0]:
             raise IndexError(f"Cannot cut experiment ({self.clip_start}) more than the actual length ({self.md['shape'][0]})! ")
         elif self.clip_start:
             print(f"clip start found ({self.clip_start})")
-        # self.img = np.memmap(os.path.join(path, self.RAW_FN), dtype=np.uint16, mode="r").reshape(self.shape)
 
-    def _import_xml(self, nplanes=1, **kwargs):
+    @MemoizedProperty(FMapTMD)
+    def md(self,):
         xml = EL.parse(os.path.join(self.path, self.md_xml))
-        md = {}
+        md = {**self._base_md}
         for child in xml.getroot():
             if child.tag == "Date":
                 md['time'] = int(child.get("uTime"))
@@ -59,9 +69,9 @@ class TExp(_ThorExp):
         md['px2units'] = (f2s, 1, 1e-3*px2um, 1e-3*px2um)
         md['units'] = ('s', '#', 'm', 'm')
         md['nplanes'] = nplanes
-        self.md.update(**md)
+        return md
 
-    @MemoizedProperty('array')
+    @MemoizedProperty(FMappedArray)
     def Fraw_cells(self):
         # TODO: extract from masks from motion corrected movie
         return
@@ -71,21 +81,25 @@ class TExp(_ThorExp):
         # TODO: zscore ra F
         return
 
-    @MemoizedProperty('array')
+    @MemoizedProperty(FMappedArray)
     def meanImg(self):
         #TODO: generate meanImg from motion corr data
         return
 
-    @MemoizedProperty('array')
+    @MemoizedProperty(FMappedArray)
     def masks_cells(self):
         # TODO: run cellpose on meanImg and get masks
         return
 
-
-
+    @MemoizedProperty()
     def img(self):
-        return
+        return rawTseries(os.path.join(self.path, self.data_raw), self.md['shape'], flyback=None, transforms=None, dtype=np.uint16, )
+
+    def correct_bidi(self,):
+        self.md['bidiphase'] = res
     
+
+
     def _load_s2p_data(self):
         try:
             cells, pos, ops = load_s2p_data(os.path.join(self.path, self.ops['save_folder']), self.md['shape'][1], doneuropil=self.doneuropil)
