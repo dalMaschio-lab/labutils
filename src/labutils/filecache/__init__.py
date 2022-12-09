@@ -1,4 +1,4 @@
-import atexit, copy, os, nrrd, json
+import atexit, os, json, inspect
 import numpy as np
 
 
@@ -65,14 +65,15 @@ class FMappedMetadata(_FMappedBase):
     def __getattribute__(self, name):
         try:
             return super().__getattribute__(name)
-        except AttributeError:
+        except AttributeError as exc:
             try:
                 return super().__getattribute__('_data_d')[name]
-            except KeyError as _:
-                raise AttributeError(f'object {self} has no attribute {name}')
+            except KeyError:
+                pass
+            raise exc
 
     def __setattr__(self, name, value):
-        if hasattr(self, name):
+        if inspect.getattr_static(self, name, AttributeError) != AttributeError:
             super().__setattr__(name, value)
         else:
             super().__getattribute__('_data_d')[name] = value
@@ -83,14 +84,19 @@ class FMappedMetadata(_FMappedBase):
     def __setitem__(self, name, value):
         self.__setattr__(name, value)
 
+memtypes = {
+    None: FMappedObj,
+    np.ndarray: FMappedArray,
+    dict: FMappedMetadata,
+}
 
 class MemoizedProperty(object):
     __slots__ = 'name', 'function', 'memobj'
     # builder
-    def __init__(self, memtype: _FMappedBase=FMappedObj):
+    def __init__(self, memtype=None):
         self.function = None
         self.name = None
-        self.memobj = memtype
+        self.memobj = memtypes[memtype]
     
     # actual registration of function site
     def __call__(self, fn):
@@ -116,3 +122,17 @@ class MemoizedProperty(object):
                 return tmp
         else:
             raise Exception()
+
+# class Test(FMappedMetadata):
+#     @property
+#     def a(self):
+#         print('a getter')
+#         return self._data_d['a']
+#     @a.setter
+#     def a(self, val):
+#         print('a setter')
+#         self._data_d['a'] = val
+
+# a=Test({'a': 3}, 'test')
+# a.a=5
+# a['b']

@@ -32,23 +32,12 @@ class TExp(_ThorExp):
         'nplanes': 1,
         'totframes': None,
         'clip': None,
+        'flyback': False,
     }
-    def __init__(self, path, parent, **kwargs):
-        super().__init__(path, parent)
-        print(f"loading Z image data at {path}...")
-        self._base_md.update({k: kwargs[k] for k in kwargs if k in ZExp._base_md})
-        px2units_um = np.array(list(map(lambda x: np.round(x*1e3,3), self.md['px2units'])))[(2,1,0),]
-        self.nrrd_header = {"space dimension": 3, "space units": ["microns", "microns", "microns"], "space directions": np.diag(px2units_um)}
 
     def __init__(self, path, parent, **kwargs):
         super().__init__(path, parent)
         self._base_md.update({k: kwargs[k] for k in kwargs if k in TExp._base_md})
-        clip_check = self.md.get('clip_start', 0)
-
-        if self.clip_start > self.md['shape'][0]:
-            raise IndexError(f"Cannot cut experiment ({self.clip_start}) more than the actual length ({self.md['shape'][0]})! ")
-        elif self.clip_start:
-            print(f"clip start found ({self.clip_start})")
 
     @MemoizedProperty(FMapTMD)
     def md(self,):
@@ -71,22 +60,24 @@ class TExp(_ThorExp):
         md['nplanes'] = nplanes
         return md
 
-    @MemoizedProperty(FMappedArray)
+    @MemoizedProperty(np.ndarray)
     def Fraw_cells(self):
         # TODO: extract from masks from motion corrected movie
         return
 
     @MemoizedProperty()
     def Fzscore_cells(self):
-        # TODO: zscore ra F
-        return
+        return stats.zscore(self.Fraw_cells, axis=1, ddof=0)
 
-    @MemoizedProperty(FMappedArray)
+    @MemoizedProperty(np.ndarray)
     def meanImg(self):
         #TODO: generate meanImg from motion corr data
-        return
+        out = np.empty(self.img.shape[1:])
+        for frame, t in zip(self.img, self.motion_transform):
+            out += img
+        return out / img.shape[0]
 
-    @MemoizedProperty(FMappedArray)
+    @MemoizedProperty(np.ndarray)
     def masks_cells(self):
         # TODO: run cellpose on meanImg and get masks
         return
