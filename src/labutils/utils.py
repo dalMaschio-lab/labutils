@@ -82,7 +82,15 @@ def times2convregress(regressors: np.ndarray, fr: float, ca2_off: float=7.8, ca2
     transient = ca2p_transient(np.linspace(0., (ca2_on*2+ca2_off*2+ca2_delay)/fs), 1.0, ca2_delay, ca2_off, ca2_on)
     return np.stack([np.convolve(tev, transient, mode='full') for tev in regressors], axis=0)[:, :regressors.shape[1]]
 
-def detect_bidi_offset(image, offsets=np.arange(-25,25)):
+def detect_bidi_offset(img, offsets=np.arange(-25,25)):
+    even = img[::2]
+    odd = img[1::2]
+    # convolve even image with shifted versions of the odd image
+    res = [(even*np.roll(odd, i,axis=-1)).mean() for i in offsets]
+    return offsets[np.argmax(res)]
+
+#old version
+def detect_bidi_offset_(image, offsets=np.arange(-25,25)):
     # created interpolated image of all even lines
     avg_even = np.stack((image[:-2:2], image[2::2])).mean(axis=0)
     # for each offset subtract rolled even from odd lines, and average over the line (offsetscores is [offsets*lines])
