@@ -1,16 +1,17 @@
-from .thorio_common import _ThorExp, MemoizedProperty
-from ..filecache import MemoizedProperty, FMappedMetadata, FMappedArray
+from .thorio_common import _ThorExp
+from ..filecache import MemoizedProperty
 from ..utils import load_s2p_data, detect_bidi_offset
 import numpy as np
 from xml.etree import ElementTree as EL
 import os, copy, time
+from math import prod
 from .mapwrap import rawTseries
 
 
 class FMapTMD(FMappedMetadata):
     @property
     def clip(self):
-        return tuple(slice(*c) for c in self._clip)
+        return tuple(slice(*c) for c in self._data_d['clip'])
 
     @clip.setter
     def clip(self, value):
@@ -19,7 +20,7 @@ class FMapTMD(FMappedMetadata):
                 c = tuple(*c)
             if abs(c.stop-c.start) > d:
                 raise ValueError(f"clipping axis {i} with {c} doesn't fit the axis size of {d}")
-        self._clip = tuple((c.start, c.stop) if type(c) is slice else c for c in value)
+        self._data_d['clip'] = tuple((c.start, c.stop) if type(c) is slice else c for c in value)
 
 
 class TExp(_ThorExp):
@@ -84,134 +85,30 @@ class TExp(_ThorExp):
 
     @MemoizedProperty()
     def img(self):
-        return rawTseries(os.path.join(self.path, self.data_raw), self.md['shape'], flyback=None, transforms=None, dtype=np.uint16, )
+        img_path = os.path.join(self.path, self.data_raw)
+        img = rawTseries(
+            img_path, self.md['shape'], dtype=np.uint16, 
+            flyback=None, transforms=None, clips=self.md['clip']
+        )
 
-    def correct_bidi(self,):
-        self.md['bidiphase'] = res
-    
-
-
-    def _load_s2p_data(self):
-        try:
-            cells, pos, ops = load_s2p_data(os.path.join(self.path, self.ops['save_folder']), self.md['shape'][1], doneuropil=self.doneuropil)
-        except FileNotFoundError as e:
-            print(f"tseries {self.path} is missing segmentetion, run s2p")
-            ops = self._run_s2p()[0]
-            cells, pos, ops = load_s2p_data(os.path.join(self.path, self.ops['save_folder']), self.md['shape'][1])
-        # nplanes = ops["nplanes"]
-        # assert(self.md['shape'][1] == nplanes)
-        self._cells = cells
-        pos[:, [0, 2]] = pos[:, [2, 0]]
-        self._pos = pos
-        self._meanImg = ops['meanImg']
-
-    def _run_s2p(self, ops={}, force_reg=False, force_ext=False):
-        try:
-            run_plane
-        except NameError:
-            from suite2p.run_s2p import run_plane, default_ops
-        self.img = np.memmap(os.path.join(self.path, self.data_raw), dtype=np.uint16, mode="r").reshape(self.md['shape'])
-        self.img = self.img[self.clip_start:, ...]
-        clipped_len = self.md['shape'][0] - self.clip_start
-        print(f"clipped len is {clipped_len} (clipped from {self.clip_start})")
-        ops = {**default_ops(), **self.ops, **ops}
-
-        ops['data_path'] = self.path
-        ops['nplanes'] = self.md['shape'][1]
-        ops['Ly'] = self.md['shape'][-2]
-        ops['Lx'] = self.md['shape'][-1] #longside
-        ops['fs'] = 1 / self.md['px2units'][0]
-        ops['nframes'] = clipped_len
-        ops['save_path0'] = ops['data_path']
-        for req in ('diameter', 'tau'):
-            if req not in ops:
-                raise ValueError(f"Please set {req} in ops")
-        if isinstance(ops['diameter'], (int, float)):
-            ops['diameter'] = np.array((ops['diameter'], ops['diameter']))
-        # ops['diameter'] /= np.array(self.md['px2units'][-2:])
-        if 'bidiphase' in self.md:
-            ops['do_bidiphase'] = False
-            ops['bidiphase'] = self.md['bidiphase']
-        #if opsp['do_registration']:
-        ops['yrange'] = np.array([0,ops['Ly']])
-        ops['xrange'] = np.array([0,ops['Lx']])
-
-        ops1 = [copy.deepcopy(ops) for _ in range(1, self.md['shape'][1])]
-        for pidx, opsp in enumerate(ops1, start=1):
-            print(f'>>>>>>>>>>>>>>>>>>>>> PLANE {pidx} <<<<<<<<<<<<<<<<<<<<<<')
-            opsp['save_path'] = os.path.join(ops['save_path0'], ops['save_folder'], f'plane{pidx}')
-            if ('fast_disk' not in ops) or len(ops['fast_disk']) == 0:
-                opsp['fast_disk'] = ops['save_path0']
-            opsp['fast_disk'] = os.path.join(opsp['fast_disk'], os.path.basename(os.path.dirname(self.path)), ops['save_folder'], f'plane{pidx}')
-            opsp['ops_path'] = os.path.join(opsp['save_path'], 'ops.npy')
-            opsp['reg_file'] = os.path.join(opsp['fast_disk'], 'data.bin')
-            if os.path.exists(os.path.join(opsp['save_path'], 'stat.npy')) and not force_ext: # plane fully analyzed
-                opsp = np.load(opsp['ops_path'], allow_pickle=True).tolist()
-                print(f"Plane {pidx} already processed, skipping... (use force_ext/force_reg to redo extraction)")
-                continue
-            elif os.path.exists(opsp['reg_file']) and os.path.exists(opsp['ops_path']) and not force_reg: # extraction not done
-                opspp = np.load(opsp['ops_path'], allow_pickle=True).tolist()
-                for k in ['fast_disk', 'reg_file', 'save_path', 'spikedetect']:
-                    opspp[k] = opsp[k]
-                opspp.update(self.ops)
-                np.save(opsp['ops_path'], opspp)
-                opspp['do_registration'] = False
-                opsp = opspp
-            else:
-                os.makedirs(opsp['fast_disk'], exist_ok=True)
-                os.makedirs(opsp['save_path'], exist_ok=True)
-                reg_file = np.memmap(
-                    opsp['reg_file'], mode="w+", dtype=np.uint16,
-                    shape=(clipped_len,*self.md['shape'][-2:])
-                    )
-                bidi_frac_tot=8
-                bidi_frac = [
-                    slice(
-                        (i - 1) * ops['Lx'] // bidi_frac_tot,
-                        i * ops['Lx'] // bidi_frac_tot,
-                    )
-                    for i in range(1, bidi_frac_tot + 1)
-                ]
-                bididect_time = 0
-                if ops["do_bidiphase"] == True:
-                    if not isinstance(ops["bidiphase"], list):
-                        tp = time.time()
-                        print("----------- BIDIPHASE CORRECTION")
-                        slicebidi = slice((clipped_len//5),(3*clipped_len//5),(2*clipped_len//(5*230)))
-                        opsp["bidiphase"] = []
-                        for fraction in bidi_frac:
-                            opsp["bidiphase"].append(detect_bidi_offset(
-                                self.img[slicebidi, pidx, ..., fraction].mean(axis=0)
-                                ))
-                        bididect_time = time.time() - tp
-                        print(f"plane {pidx} bidi offset: {opsp['bidiphase']} in {bididect_time:0.2f} sec")
+        # claculate the flybacks
+        if self.md['flyback']:
+            flyback = []
+            for i, fb in enumerate(self.md['flyback'], start = 1):
+                if type(fb) == int: 
+                    flyback.append(fb)
+                elif fb:
+                    # don't start from the beginning just in case
+                    tmp = img[img.shape[0]//3:, ...]
+                    flyback.append(detect_bidi_offset(
+                        tmp[::prod(tmp.shape[:i])//3000, ...] # take enough to have ~3000 lines
+                        .mean(axis=tuple(range(i+1, img.ndim))) # average axes below 
+                        .reshape((-1,  img.shape[i])) # reshape to have a rank 2 image 
+                    ))
                 else:
-                    opsp["bidiphase"] = [0]
-                    bidi_frac = [slice(None)]
-                earlyMeanKey = 'refImg' if ops['do_registration'] else 'meanImg'
-                opsp[earlyMeanKey] = np.zeros(self.md['shape'][-2:], dtype=np.float32)
-                img = np.empty(self.md['shape'][-2:])
-                print("----------- SAVING BINFILE")
-                tp = time.time()
-                for imgr, imgo in zip(reg_file, self.img[:, pidx, ...]):
-                    img[::2, ...] = imgo[::2, ...]
-                    for frac, bidi in zip(bidi_frac, opsp["bidiphase"]):
-                        img[1::2, frac] = np.roll(imgo[1::2, ...], bidi, axis=-1)[..., frac]
-                        # inv_frac = slice((-frac.stop - 1) if frac.stop else 0, -frac.start)
-                        # img[1::2, inv_frac] = np.roll(imgo[1::2, ...], bidi, axis=-1)[..., inv_frac]
-                    opsp[earlyMeanKey] += img.astype(np.float32)
-                    imgr[...] = img[...]
-                opsp[earlyMeanKey] /= clipped_len
-                writing_time = time.time() - tp
-                print(f"wrote to disk {reg_file.size * reg_file.itemsize} bytes in {writing_time:0.2f} sec")
-                #opsp['force_refImg'] = True
-                opsp['bidi_corrected'] = True
-                opsp['do_bidiphase'] = False
-                np.save(opsp['ops_path'], opsp)
-                print(f"----------- Total {writing_time+bididect_time:2f} sec.")
-                del reg_file
-
-            op = run_plane(opsp, ops_path=opsp['ops_path'])
-            opsp.update(**op)
-            print(f"Plane {pidx} processed in {op['timing']['total_plane_runtime']:0.2f} sec (can open in GUI).")
-        return ops1
+                    flyback.append(0)
+        img.flyback = tuple(flyback)
+        self.md['flyback'] = tuple(flyback)
+        
+        return img
+    
