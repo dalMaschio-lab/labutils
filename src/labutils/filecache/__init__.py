@@ -49,7 +49,7 @@ class FMappedMetadata(_FMappedBase):
         inst._data_d = {}
         path = path + '.json'
         inst.buffer = open(path, 'r+')
-        inst.update(json.load(inst.buffer))
+        inst.update({k: tuple(i) if type(i) is list else i for k, i in json.load(inst.buffer).items()})
         return inst
         
     def flush(self):
@@ -59,8 +59,9 @@ class FMappedMetadata(_FMappedBase):
         self.buffer.flush()
 
     def __del__(self):
-        self.flush()
-        self.buffer.close()
+        if self.buffer:
+            self.flush()
+            self.buffer.close()
 
     def __getattribute__(self, name):
         try:
@@ -79,7 +80,7 @@ class FMappedMetadata(_FMappedBase):
             super().__getattribute__('_data_d')[name] = value
 
     def __getitem__(self, name):
-        self.__getattribute__(name)
+        return self.__getattribute__(name)
 
     def __setitem__(self, name, value):
         self.__setattr__(name, value)
