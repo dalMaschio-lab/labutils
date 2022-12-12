@@ -46,8 +46,11 @@ class rawTseries(np.memmap):
     def flyback(self, val):
         if val is None:
             self._flyback = (0, ) * (self.ndim-1)
-        elif len(val) == self.ndim - 1 and all(isinstance(c, int) for c in val):
-            self._flyback = val
+        elif len(val) == self.ndim - 1:
+            self._flyback = tuple(
+                ((np.arange(s) - v)%s).astype(np.intp) if isinstance(v, np.ndarray) else 0
+                for v, s in zip(val, self.shape[1:])
+            )
         else:
             raise ValueError('flyback should be a tuple for each axis except the first')
 
@@ -68,29 +71,35 @@ class rawTseries(np.memmap):
             return self
         
         key = self._process_indexes(key)
-        stages = []
+        stages = []; odds_idxs=[]
         assert(len(key)==self.ndim)
-        for k, s, f in zip(key, self.shape, (0,) + self._flyback):
-            if not f:
+        for k, s, f, zisodd in zip(key, self.shape, (0,) + self._flyback, self.zeroiseven):
+            odds = np.ones(s, dtype=bool)
+            odds[::2] = False
+            if zisodd:
+                odds = ~odds
+            if not np.any(f):
                 if type(k) is slice:
-                    startodd = k.start and (k.start if k.start >= 0 else s + k.start)%2
-                    st0 = slice(k.start - 1 if startodd else k.start, k.stop,)
-                    st1 = slice(1 if startodd else None, None, k.step)
-                elif type(k) is int:
+                    st0 = k
+                    st1 = slice(None)
+                elif isinstance(k, (int, np.int_)):
                     k = k if k >= 0 else s+k
-                    st0 = slice(k - 1 if k%2 else k, k+1,)
-                    st1 = k%2
+                    st0 = slice(k, k+1,)
+                    st1 = 0
                 elif isinstance(k, (list, tuple, np.ndarray)):
                     k = np.asarray(k, )
                     if k.ndim != 1:
                         raise IndexError(f"cannot index an axis with a {k.ndim}d array")
-                    if k.dtype == bool:
-                        k = np.where(k)[0]
-                        st0 = slice(k.min(), k.max())
-                        st1 = k - k.min()
-                    elif k.dtype == int:
-                        st0 = slice(k.min(), k.max()+1)
-                        st1 = k - k.min()
+                    # if k.dtype == bool:
+                    #     k = np.where(k)[0]
+                    #     st0 = slice(k.min(), k.max())
+                    #     st1 = k - k.min()
+                    # elif k.dtype == int:
+                    #     st0 = slice(k.min(), k.max()+1)
+                    #     st1 = k - k.min()
+                    if k.dtype == bool or k.dtype == int:
+                        st0 = k
+                        st1 = None
                     else:
                         raise IndexError(f"Unsupported type for array indexing {k}")
                 else:
@@ -99,25 +108,33 @@ class rawTseries(np.memmap):
                 st0 = slice(None)
                 st1 = k
             stages.append((st0, st1))
+            odds_idxs.append(odds[st0])
         
         stages = tuple(zip(*stages))
         out = self.view(np.memmap)[stages[0]]
-
         # sequential rolling logic to fix flybacks by using rolling logic
-        for shift, axis, swap in zip(self._flyback[::-1], range(out.ndim), self.zeroiseven[::-1]):
-            if shift:
+        for shift, axis, swap in zip(self._flyback[::-1], range(out.ndim), odds_idxs[::-1][1:]):
+            # if isinstance(shift, (int, np.int_)) and shift:
+            #     tmp = np.empty_like(out)
+            #     tmp[self._make_slicing_tuple(axis, slice(shift, None), swap)]=out[self._make_slicing_tuple(axis, slice(None, -shift), swap)]
+            #     tmp[self._make_slicing_tuple(axis, slice(None, shift), swap)]=out[self._make_slicing_tuple(axis, slice(-shift, None), swap)]
+            if isinstance(shift, np.ndarray):
                 tmp = np.empty_like(out)
-                tmp[self._make_slicing_tuple(axis, slice(shift, None), even=swap)] = out[self._make_slicing_tuple(axis, slice(None, -shift), even=swap)]
-                tmp[self._make_slicing_tuple(axis, slice(None, shift), even=swap)] = out[self._make_slicing_tuple(axis, slice(-shift, None), even=swap)]
-                evens = self._make_slicing_tuple(axis, slice(None), even=not swap)
-                tmp[evens] = out[evens]
-                out = tmp
+                tmp[self._make_slicing_tuple(axis, slice(None), swap)] = out[self._make_slicing_tuple(axis, shift, swap)]
+            else: continue
+            evens = self._make_slicing_tuple(axis, slice(None), ~swap)
+            tmp[evens] = out[evens]
+            out = tmp
         
         return out[stages[1]]
     
     @staticmethod
-    def _make_slicing_tuple(axis, sl, even=False):
-        return (Ellipsis, slice(0 if even else 1, None, 2), sl, *(slice(None),) * axis)
+    def _make_slicing_tuple(axis, sl, rec):
+        if isinstance(sl, np.ndarray):
+            return (Ellipsis, *np.ix_(rec, sl), *(slice(None),) * axis) 
+        else:
+            return (Ellipsis, rec, sl, *(slice(None),) * axis)
+
 
     # def __setitem__(self, key, value):
     #     pass
@@ -154,8 +171,8 @@ if __name__ == '__main__':
     a = rawTseries('test.raw', shape=(20,8,12), flyback=(1,3), chunksize=30, clips=(slice(3, 10)))
     assert(np.all(a[...] == a[:]))
     assert(np.all(a[3, :, 1:3] == a[:][3, :, 1:3]))
-    assert(np.all(a[3:10:2, ...] == a[:][3:10:2, ...]))
-    assert(np.all(a[(2,3,5), :] == a[:][(2,3,5), :]))
+    assert(np.all(a[3:10:3, ...] == a[:][3:10:3, ...]))
+    assert(np.all(a[(1,3,5), :] == a[:][(1,3,5), :]))
     assert(np.all(a.sum(axis=0) == a[:].sum(axis=0)))
     assert(np.all(a.sum(axis=2) == a[:].sum(axis=2)))
     assert(np.all(a.sum(axis=(1,2)) == a[:].sum(axis=(1,2))))
