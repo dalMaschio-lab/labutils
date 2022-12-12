@@ -1,11 +1,13 @@
 from .thorio_common import _ThorExp
-from ..filecache import MemoizedProperty
-from ..utils import load_s2p_data, detect_bidi_offset
+from ..filecache import MemoizedProperty, FMappedMetadata
+from .mapwrap import rawTseries
+from ..utils import detect_bidi_offset
 import numpy as np
 from xml.etree import ElementTree as EL
 import os, copy, time
 from math import prod
-from .mapwrap import rawTseries
+from suite2p import run_plane
+from tqdm.auto import trange, tqdm
 
 
 class FMapTMD(FMappedMetadata):
@@ -15,7 +17,7 @@ class FMapTMD(FMappedMetadata):
 
     @clip.setter
     def clip(self, value):
-        for i, (c, d) in enumerate(zip(value, self._shape), strict=True):
+        for i, (c, d) in enumerate(zip(value, self._shape,)):
             if type(c) is not tuple:
                 c = tuple(*c)
             if abs(c.stop-c.start) > d:
@@ -29,21 +31,27 @@ class TExp(_ThorExp):
         'time': 0,
         'shape': None,
         'px2units': None,
-        'units': ('m', 'm', 'm'),
+        'units': ('s', 'm', 'm', 'm'),
         'nplanes': 1,
         'totframes': None,
         'clip': None,
         'flyback': False,
+        'cellpose_model': None,
+        'cell_flow_thr': 0,
+        'cell_prob_thr': 0,
+        'cell_diameter': (5.25e-06, 5.25e-06)
     }
+    flyback_heuristics = ((0, (1/3,2/3)), (7/8, (3/4,1)), (1/4, (1/6, 1/3)))
 
     def __init__(self, path, parent, **kwargs):
         super().__init__(path, parent)
         self._base_md.update({k: kwargs[k] for k in kwargs if k in TExp._base_md})
 
-    @MemoizedProperty(FMapTMD)
+    @MemoizedProperty(dict)
     def md(self,):
         xml = EL.parse(os.path.join(self.path, self.md_xml))
         md = {**self._base_md}
+        nplanes = md['nplanes']
         for child in xml.getroot():
             if child.tag == "Date":
                 md['time'] = int(child.get("uTime"))
@@ -56,9 +64,11 @@ class TExp(_ThorExp):
                 px2um = float(child.get("pixelSizeUM"))
                 f2s = nplanes / float(child.get("frameRate"))
         md['shape'] = (md['totframes']//nplanes, nplanes, *size)
-        md['px2units'] = (f2s, 1, 1e-3*px2um, 1e-3*px2um)
+        md['px2units'] = (f2s, 1, 1e-6*px2um, 1e-6*px2um)
         md['units'] = ('s', '#', 'm', 'm')
-        md['nplanes'] = nplanes
+        if not md['flyback']:
+            md['flyback'] = (False, ) * (len(md['shape']) -1)
+        md['cell_diameter_px'] = tuple(d/px2um for d, px2m in zip(md['cell_diameter'], md['px2units'][-2:]))
         return md
 
     @MemoizedProperty(np.ndarray)
@@ -80,35 +90,81 @@ class TExp(_ThorExp):
 
     @MemoizedProperty(np.ndarray)
     def masks_cells(self):
-        # TODO: run cellpose on meanImg and get masks
-        return
+        from cellpose.models import CellposeModel
+        meanImg = self.img.meanImg
+        pretrained_model = self.md['cellpose_model']
+        diameter = self.md['cell_diameter_px']
+        flow_threshold = self.md['cell_flow_thr']
+        cellprob_threshold =self.md['cell_prob_thr']
+        print(f'>>>> Running cellpose to find masks...')
+        if not os.path.exists(pretrained_model):
+            model = CellposeModel(model_type=pretrained_model)
+        else:
+            model = CellposeModel(pretrained_model=pretrained_model)
+        
+        masks = np.stack([
+            model.eval(
+                mplane, net_avg=True, channels=[0,0], diameter=diameter, 
+                cellprob_threshold=cellprob_threshold, flow_threshold=flow_threshold)[0]
+            for mplane in tqdm(meanImg, unit='plane')
+            ])
+        print(f'>>>> {masks.max()} masks detected')
+        print("="*40)
+        return masks
 
     @MemoizedProperty()
     def img(self):
+        print(f'>>>> Opening raw image...')
         img_path = os.path.join(self.path, self.data_raw)
         img = rawTseries(
             img_path, self.md['shape'], dtype=np.uint16, 
-            flyback=None, transforms=None, clips=self.md['clip']
+            flyback=None, clips=self.md['clip']
         )
-
         # claculate the flybacks
         if self.md['flyback']:
             flyback = []
             for i, fb in enumerate(self.md['flyback'], start = 1):
-                if type(fb) == int: 
+                if type(fb) is int: 
                     flyback.append(fb)
                 elif fb:
+                    calculated_flyback = 0
+                    pos = 0
+                    for poss, (frac0, frac1) in self.flyback_heuristics:
                     # don't start from the beginning just in case
-                    tmp = img[img.shape[0]//3:, ...]
-                    flyback.append(detect_bidi_offset(
-                        tmp[::prod(tmp.shape[:i])//3000, ...] # take enough to have ~3000 lines
-                        .mean(axis=tuple(range(i+1, img.ndim))) # average axes below 
-                        .reshape((-1,  img.shape[i])) # reshape to have a rank 2 image 
-                    ))
+                        tmp = img[img.shape[0]//3:, ..., int(frac0*img.shape[-1]):int(frac1*img.shape[-1])]
+                        print(f'>>>> Calculating flyback for axis {i}', end='')
+                        print('with ' + fb if type(fb) is str else "constant" + 'evolution...')
+                        cf = detect_bidi_offset(
+                            tmp[::prod(tmp.shape[:i])//3000, ...] # take enough to have ~3000 lines
+                            .mean(axis=tuple(range(i+1, img.ndim))) # average axes below 
+                            .reshape((-1,  tmp.shape[i])), # reshape to have a rank 2 image 
+                            get_pos=False
+                        )
+                        print(f'>>>> found flyback {cf}px ')
+                        if cf > 10:
+                            calculated_flyback = cf
+                            pos = poss
+                            break
+                        if cf > calculated_flyback:
+                            calculated_flyback = cf
+                            pos = poss
+                    if type(fb) is str:
+                        flyback_arr = self.get_flyback_fun(*fb.split(' '))
+                        calculated_flyback = flyback_arr(calculated_flyback, pos, img.shape[i])
+                    flyback.append(calculated_flyback)
                 else:
                     flyback.append(0)
         img.flyback = tuple(flyback)
-        self.md['flyback'] = tuple(flyback)
-        
+        #self.md['flyback'] = tuple(flyback)
+        print("="*40)
         return img
+
+    @staticmethod
+    def get_flyback_fun(*args):
+        fun = {
+            "cos": np.cos,
+        }[args[0]]
+        ptp_ratio = float(args[-1])
+        return lambda A, pos, size: A * (fun(np.linspace(-(tmp:=np.arccos(ptp_ratio)), tmp, size)) + (pos)*(1-ptp_ratio))
     
+
