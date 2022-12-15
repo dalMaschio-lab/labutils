@@ -100,27 +100,28 @@ class TExp(_ThorExp):
 
     @MemoizedProperty(np.ndarray)
     def masks_cells(self):
-        from cellpose.models import CellposeModel
-        meanImg = self.img.meanImg
-        pretrained_model = self.md['cellpose_model']
-        diameter = self.md['cell_diameter_px']
-        flow_threshold = self.md['cell_flow_thr']
-        cellprob_threshold =self.md['cell_prob_thr']
-        print(f'>>>> Running cellpose to find masks...')
-        if not os.path.exists(pretrained_model):
-            model = CellposeModel(model_type=pretrained_model)
-        else:
-            model = CellposeModel(pretrained_model=pretrained_model)
-        
-        masks = np.stack([
-            model.eval(
-                mplane, net_avg=True, channels=[0,0], diameter=diameter, 
-                cellprob_threshold=cellprob_threshold, flow_threshold=flow_threshold)[0]
-            for mplane in tqdm(meanImg, unit='plane')
-            ])
-        print(f'>>>> {masks.max()} masks detected')
-        print("="*40)
-        return masks
+        with TerminalHeader(' [Mask Extraction] '):
+            from cellpose.models import CellposeModel
+            meanImg = self.meanImg
+            pretrained_model = self.md['cellpose_model']
+            diameter = self.md['cell_diameter_px']
+            print(f'>>>> Cell diameter is: {diameter}px')
+            flow_threshold = self.md['cell_flow_thr']
+            cellprob_threshold =self.md['cell_prob_thr']
+            print(f'>>>> Loading cellpose model {pretrained_model}')
+            if not os.path.exists(pretrained_model):
+                model = CellposeModel(model_type=pretrained_model)
+            else:
+                model = CellposeModel(pretrained_model=pretrained_model)
+            print('>>>> Running cellpose to find masks...')
+            masks = np.stack([
+                model.eval(
+                    mplane, net_avg=True, channels=[0,0], diameter=diameter[0], 
+                    cellprob_threshold=cellprob_threshold, flow_threshold=flow_threshold)[0]
+                for mplane in tqdm(meanImg, unit='plane')
+                ])
+            print(f'>>>> {masks.max()} masks detected')
+            return masks
 
     @MemoizedProperty()
     def img(self):
