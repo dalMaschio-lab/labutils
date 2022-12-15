@@ -92,6 +92,16 @@ class TExp(_ThorExp):
 
     @MemoizedProperty(np.ndarray)
     def meanImg(self):
+        with TerminalHeader(' [Mean image] '):
+            out = np.zeros(self.img.shape[1:])
+            div = np.zeros(self.img.shape[1:])
+            for frame, ttt in tqdm(zip(self.img, np.round(self.motion_transforms).astype(np.intp)), desc='>>>> calculating shifted frames', total=self.img.shape[0], unit='frames'):
+                outslices = tuple(slice(-t) if t>0 else slice(-t, None) for t in ttt )
+                frameslices = tuple(slice(t, None) if t>=0 else slice(t) for t in ttt)
+                out[outslices] += frame[frameslices]
+                div[outslices] += 1.0
+            return out / div
+    
     @MemoizedProperty(np.ndarray)
     def motion_transforms(self) -> np.ndarray:
         with TerminalHeader(' [Motion correction] '):
