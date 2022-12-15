@@ -54,7 +54,7 @@ class rawTseries(np.memmap):
         else:
             raise ValueError('flyback should be a tuple for each axis except the first')
 
-    def _process_indexes(self, ixs):
+    def _process_indexes(self, ixs) -> 'tuple[slice | int]':
         if ixs is ...:
             return (slice(None), ) * self.ndim
         elif type(ixs) is not tuple:
@@ -135,9 +135,11 @@ class rawTseries(np.memmap):
         else:
             return (Ellipsis, rec, sl, *(slice(None),) * axis)
 
-
     # def __setitem__(self, key, value):
     #     pass
+
+    def __iter__(self):
+        return SeresIterator(self)
 
     def __array_ufunc__(self, ufunc, method, *inputs, **kwargs):
         if method == 'reduce':
@@ -152,7 +154,7 @@ class rawTseries(np.memmap):
                 dtype=kwargs['dtype'] if kwargs['dtype'] else np.dtype(f"{inputs[0].dtype.byteorder}{inputs[0].dtype.kind}4"))
             out.fill(ufunc.identity)
             blocks = np.arange(0, inputs[0].shape[0], self.chunksize)
-            for start, stop in zip(blocks, [*blocks[1:], None]):
+            for start, stop in zip(blocks, (*blocks[1:], None)):
                 arr = inputs[0][start:stop]
                 if 0 in axis:
                     ufunc(out, ufunc.reduce(arr, axis), out=out)
@@ -162,6 +164,25 @@ class rawTseries(np.memmap):
         else:
             print(method, ufunc)
             return NotImplemented
+
+
+class SeresIterator(object):
+    def __init__(self, map: rawTseries):
+        self.map = map
+        self.n = -1
+        # self.blocks = np.arange(0, self.map.shape[0], self.map.chunksize)
+
+    def __iter__(self):
+        return self
+
+    def __next__(self,):
+        self.n +=1
+        if self.n == self.map.shape[0]:
+            raise StopIteration
+        return self.map[self.n]
+
+    def __len__(self):
+        return self.map.shape[0]
 
 if __name__ == '__main__':
     # a=np.memmap('test', dtype=np.uint16, shape=(20,8,12), mode='w+')
