@@ -86,7 +86,6 @@ class FMappedMetadata(_FMappedBase):
         self.__setattr__(name, value)
 
 memtypes = {
-    None: FMappedObj,
     np.ndarray: FMappedArray,
     dict: FMappedMetadata,
 }
@@ -94,10 +93,13 @@ memtypes = {
 class MemoizedProperty(object):
     __slots__ = 'name', 'function', 'memobj'
     # builder
-    def __init__(self, memtype=None):
+    def __init__(self, memtype=FMappedObj):
         self.function = None
         self.name = None
-        self.memobj = memtypes[memtype]
+        if isinstance(memtype, _FMappedBase):
+            self.memobj = memtype
+        else:
+            self.memobj = memtypes[memtype]
     
     # actual registration of function site
     def __call__(self, fn):
@@ -109,7 +111,7 @@ class MemoizedProperty(object):
 
     def __get__(self, instance, owner):
         #print(f"{self}({self.name}).__get__ called with {instance} and {owner}")
-        if self.name:
+        if self.name and self.function:
             #print(f"{instance}.__dict__ is {instance.__dict__}")
             try:
                 return instance.__dict__[self.name]
