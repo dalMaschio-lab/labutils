@@ -28,6 +28,7 @@ def ca2p_peeling(cellsF, fs, thresholds, maxpeaks=5):
     cells_params[:, :, 1].fill(np.Inf)
     for cellF, params, threshold in zip(cellsF, cells_params, thresholds):
         cell = cellF.copy()
+        i = 0
         for i in range(maxpeaks+1):
             if i==maxpeaks or (tmp:=cell.max()) <= threshold:
                 break
@@ -47,7 +48,7 @@ def ca2p_peeling(cellsF, fs, thresholds, maxpeaks=5):
                     loss='linear'
                 )
             except (RuntimeError, RuntimeError) as e:
-                params = np.tile([[0, np.Inf, 0, 0]], (maxpeaks, 1))
+                params = np.tile([[0., np.Inf, 0., 0.]], (maxpeaks, 1))
                 print(f"Error {e} while optimizing")
 
             # print(params[:i])
@@ -78,15 +79,20 @@ def times2convregress_(regressors: np.ndarray, fr: float, ca2_off: float=7.8, ca
                           np.exp(np.linspace(0, -np.log(15), round(ca2_off * fr))),))
     return np.stack([np.convolve(tev, transient, mode='same')/transient.sum() for tev in regressors], axis=0)
 
-def times2convregress(regressors: np.ndarray, fr: float, ca2_off: float=7.8, ca2_on: float=1.4, ca2_delay=5.6, baseoff=15):
+def times2convregress(regressors: np.ndarray, fs: float, ca2_off: float=7.8, ca2_on: float=1.4, ca2_delay=5.6, baseoff=15):
     transient = ca2p_transient(np.linspace(0., (ca2_on*2+ca2_off*2+ca2_delay)/fs), 1.0, ca2_delay, ca2_off, ca2_on)
     return np.stack([np.convolve(tev, transient, mode='full') for tev in regressors], axis=0)[:, :regressors.shape[1]]
 
-def detect_bidi_offset(img, offsets=np.arange(-25,25)):
+def detect_bidi_offset(img, offsets=np.arange(-25,25),) -> float:
     even = img[::2]
     odd = img[1::2]
     # convolve even image with shifted versions of the odd image
     res = [(even*np.roll(odd, i,axis=-1)).mean() for i in offsets]
+    # if False:
+    #     offset = offsets[np.argmax(res)]
+    #     dist = np.percentile(img,(97.5, 98, 98.5, 99, 99.5),axis=0).mean(axis=0)#np.std(img,axis=0)
+    #     return offset, np.average(np.linspace(-1,1, img.shape[-1]), weights=dist-dist.min())
+    #     #return offset, np.linspace(-1,1, img.shape[-1])[np.argmax(np.convolve(dist, (tmp:=np.kaiser(5,5))/tmp.sum()))]
     return offsets[np.argmax(res)]
 
 #old version
@@ -133,9 +139,28 @@ def find_fish(folder, gcamp=(6, 7)):
             fishes.append((fn, date, cond, gcamp))
     return fishes
 
-def _norm_u16stack2float(img, mx=1., pc=(1,99), k=(1,4,4)):
+def _norm_u16stack2float(img, mx=1., pc: tuple=(1,99), k=(1,4,4)):
     img = img.astype(np.float64)
     ptp = np.percentile(img, pc)
     img = (mx/(ptp[1]-ptp[0]) * (img - ptp[0])).astype(np.float32)
     img = np.clip(img, 0., mx)
     return transform.downscale_local_mean(img, k)
+
+class TerminalHeader(object):
+    def __init__(self, title: str, fillchar='=', ncols:"None | int"=None, ) -> None:
+        from tqdm.std import tqdm
+        if ncols:
+            self.ncols = ncols
+        elif (ncols := tqdm([], leave=False).ncols):
+            self.ncols = ncols
+        else:
+            self.ncols = 80
+        self.title = title
+        self.fillchar =fillchar
+
+    def __enter__(self,):
+        print(self.title.center(self.ncols, self.fillchar))
+        return self
+
+    def __exit__(self, type, value, traceback):
+        print(self.fillchar * self.ncols)
