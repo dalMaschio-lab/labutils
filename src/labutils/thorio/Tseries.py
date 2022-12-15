@@ -92,11 +92,99 @@ class TExp(_ThorExp):
 
     @MemoizedProperty(np.ndarray)
     def meanImg(self):
-        #TODO: generate meanImg from motion corr data
-        out = np.empty(self.img.shape[1:])
-        for frame, t in zip(self.img, self.motion_transform):
-            out += img
-        return out / img.shape[0]
+    @MemoizedProperty(np.ndarray)
+    def motion_transforms(self) -> np.ndarray:
+        with TerminalHeader(' [Motion correction] '):
+            import itk
+            print(">>>> making reference...")
+            precision =  itk.F
+            c = self.img.shape[0] // 2
+            center_block = self.img[c-150:c+150:20]
+            ptp = np.percentile(center_block, (.5, 99.5))
+            reference = itk.GetImageFromArray(center_block.mean(axis=0).astype(precision))
+            moving_base = itk.Image[precision, reference.ndim]
+            reg_param = np.empty((self.img.shape[0], 3))
+
+            print(">>>> making transforms...")
+            transforms = np.empty((self.img.shape[0], 3))
+            transform_base = itk.TranslationTransform[itk.D, reference.ndim]
+            id_transform = itk.IdentityTransform[itk.D, reference.ndim].New()
+            id_transform.SetIdentity()
+
+            print(">>>> making metric...")
+            FixedInterp = itk.LinearInterpolateImageFunction[reference, itk.D].New()
+            MovingInterp = itk.LinearInterpolateImageFunction[reference, itk.D].New()
+            metric = itk.CorrelationImageToImageMetricv4[reference, moving_base].New(
+                FixedImage=reference,
+                FixedTransform=id_transform,
+                FixedInterpolator=FixedInterp,
+                MovingInterpolator=MovingInterp
+            ) #itk.MattesMutualInformationImageToImageMetricv4[reference, moving_base].New()
+            # metric.SetNumberOfHistogramBins(16)
+
+            print(">>>> making scale estimator...")
+            shiftScaleEstimator = itk.RegistrationParameterScalesFromPhysicalShift[metric].New()
+            shiftScaleEstimator.SetMetric(metric)
+
+            print(">>>> making optimizer...")
+            optimizer = itk.RegularStepGradientDescentOptimizerv4.New(
+                LearningRate=4,
+                MinimumStepLength=0.0015,
+                RelaxationFactor=0.4,
+                NumberOfIterations=100,
+                MaximumStepSizeInPhysicalUnits=10.,
+                MinimumConvergenceValue=0.6,
+                ScalesEstimator=shiftScaleEstimator,
+            )
+
+            # optimizer = itk.GradientDescentOptimizerv4.New(
+            #     NumberOfIterations=100,
+            #     LearningRate=4,
+            #     MaximumStepSizeInPhysicalUnits=10.,
+            #     MinimumConvergenceValue=0.6,
+            #     ScalesEstimator=shiftScaleEstimator,
+            # )
+            print(">>>> making registration...")
+            registrer = itk.ImageRegistrationMethodv4[reference, moving_base].New(
+                FixedImage=reference,
+                FixedInitialTransform=id_transform,
+                # Metric=metric,
+                Optimizer=optimizer,
+            )
+            registrer.SetNumberOfLevels(1)
+            registrer.SetShrinkFactorsPerLevel((6,))
+            registrer.SetSmoothingSigmasPerLevel((2,))
+            registrer.SetMetricSamplingStrategy(itk.ImageRegistrationMethodv4Enums.MetricSamplingStrategy_RANDOM)
+            registrer.SetMetricSamplingPercentage(0.6)
+            movingInitialTransform = transform_base.New()
+            initialParameters = movingInitialTransform.GetParameters()
+            initialParameters.Fill(0.)
+            movingInitialTransform.SetParameters(initialParameters)
+            registrer.SetMovingInitialTransform(movingInitialTransform)
+
+            with trange(0, self.img.shape[0], unit='frames', desc='getting frame') as bar:
+                for n in bar:
+                    frame = self.img[n]
+                    shift = transforms[n]
+                    frametk = itk.GetImageFromArray(np.clip(frame.astype(precision.dtype), *ptp))
+                    metric = metric.Clone()
+                    registrer.SetMetric(metric)
+                    shiftScaleEstimator.SetMetric(metric)
+
+                    transform = transform_base.New()
+                    registrer.SetInitialTransform(transform)
+                    registrer.SetMovingImage(frametk)
+
+                    bar.set_description(f'{">>>> registration": >25}')
+                    registrer.Update()
+                    shift[:] = registrer.GetTransform().GetParameters()
+                    reg_param[n] = optimizer.GetCurrentIteration(), optimizer.GetValue(), optimizer.GetStopCondition()
+                    registrer.ResetPipeline()
+                    # registrer.SetMovingInitialTransform(registrer.GetTransform())
+                    bar.set_description(f'{">>>> getting frame": >20}')
+            # print(transforms[:5], '\n', reg_param[:5])
+            np.save(os.path.join(self.path, 'reg_param'), reg_param)
+            return transforms
 
     @MemoizedProperty(np.ndarray)
     def masks_cells(self):
