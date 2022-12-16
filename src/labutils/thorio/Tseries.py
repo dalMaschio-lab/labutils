@@ -1,13 +1,13 @@
 from .thorio_common import _ThorExp
 from ..filecache import MemoizedProperty, FMappedMetadata
 from .mapwrap import rawTseries
-from ..utils import detect_bidi_offset, TerminalHeader
+from ..utils import detect_bidi_offset, TerminalHeader, tqdmlog
 import numpy as np
 from xml.etree import ElementTree as EL
 import os, copy, time
 from math import prod
 from suite2p import run_plane
-from tqdm.auto import trange, tqdm
+# from tqdm.auto import trange, tqdm
 from scipy import stats
 
 
@@ -95,11 +95,12 @@ class TExp(_ThorExp):
         with TerminalHeader(' [Mean image] '):
             out = np.zeros(self.img.shape[1:])
             div = np.zeros(self.img.shape[1:])
-            for frame, ttt in tqdm(zip(self.img, np.round(self.motion_transforms).astype(np.intp)), desc='>>>> calculating shifted frames', total=self.img.shape[0], unit='frames'):
-                outslices = tuple(slice(-t) if t>0 else slice(-t, None) for t in ttt )
-                frameslices = tuple(slice(t, None) if t>=0 else slice(t) for t in ttt)
-                out[outslices] += frame[frameslices]
-                div[outslices] += 1.0
+            with tqdmlog(zip(self.img, np.round(self.motion_transforms).astype(np.intp)), desc='>>>> calculating mean offsets', total=self.img.shape[0], unit='frames') as bar:
+                for frame, ttt in bar:
+                    outslices = tuple(slice(-t) if t>0 else slice(-t, None) for t in ttt )
+                    frameslices = tuple(slice(t, None) if t>=0 else slice(t) for t in ttt)
+                    out[outslices] += frame[frameslices]
+                    div[outslices] += 1.0
             return out / div
     
     @MemoizedProperty(np.ndarray)
@@ -172,8 +173,9 @@ class TExp(_ThorExp):
             movingInitialTransform.SetParameters(initialParameters)
             registrer.SetMovingInitialTransform(movingInitialTransform)
 
-            with trange(0, self.img.shape[0], unit='frames', desc='getting frame') as bar:
+            with tqdmlog(np.arange(self.img.shape[0]), unit='frames',) as bar:
                 for n in bar:
+                    bar.set_description(f'{">>>> getting frame": <25}')
                     frame = self.img[n]
                     shift = transforms[n]
                     frametk = itk.GetImageFromArray(np.clip(frame.astype(precision.dtype), *ptp))
@@ -185,13 +187,13 @@ class TExp(_ThorExp):
                     registrer.SetInitialTransform(transform)
                     registrer.SetMovingImage(frametk)
 
-                    bar.set_description(f'{">>>> registration": >25}')
+                    bar.set_description(f'{">>>> registration": <25}')
                     registrer.Update()
                     shift[:] = registrer.GetTransform().GetParameters()
                     reg_param[n] = optimizer.GetCurrentIteration(), optimizer.GetValue(), optimizer.GetStopCondition()
                     registrer.ResetPipeline()
                     # registrer.SetMovingInitialTransform(registrer.GetTransform())
-                    bar.set_description(f'{">>>> getting frame": >20}')
+                    
             # print(transforms[:5], '\n', reg_param[:5])
             np.save(os.path.join(self.path, 'reg_param'), reg_param)
             return transforms
@@ -211,12 +213,12 @@ class TExp(_ThorExp):
                 model = CellposeModel(model_type=pretrained_model)
             else:
                 model = CellposeModel(pretrained_model=pretrained_model)
-            print('>>>> Running cellpose to find masks...')
-            masks = np.stack([
+            with tqdmlog(meanImg, unit='plane', desc='>>>> Running cellpose') as bar:
+                masks = np.stack([
                 model.eval(
                     mplane, net_avg=True, channels=[0,0], diameter=diameter[0], 
                     cellprob_threshold=cellprob_threshold, flow_threshold=flow_threshold)[0]
-                for mplane in tqdm(meanImg, unit='plane')
+                    for mplane in bar
                 ])
             print(f'>>>> {masks.max()} masks detected')
             return masks

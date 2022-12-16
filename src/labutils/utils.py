@@ -3,6 +3,8 @@ from skimage import transform
 from scipy import optimize
 import re, os
 
+from tqdm.auto import tqdm
+
 def corrcoef_f(x, y=None, rowvar=True, dtype=None):
     corr_mat = np.corrcoef(x, y=y, rowvar=rowvar, dtype=dtype)
     corr_mat = (corr_mat + corr_mat.T)/2
@@ -148,7 +150,6 @@ def _norm_u16stack2float(img, mx=1., pc: tuple=(1,99), k=(1,4,4)):
 
 class TerminalHeader(object):
     def __init__(self, title: str, fillchar='=', ncols:"None | int"=None, ) -> None:
-        from tqdm.std import tqdm
         if ncols:
             self.ncols = ncols
         elif (ncols := tqdm([], leave=False).ncols):
@@ -164,3 +165,9 @@ class TerminalHeader(object):
 
     def __exit__(self, type, value, traceback):
         print(self.fillchar * self.ncols)
+
+class tqdmlog(tqdm):
+    def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
+        info = self.format_dict
+        print(f'{self.desc} done in {self.format_interval(info["elapsed"])}s at {self.total/info["elapsed"]:.2f} {self.unit}/s')
+        return super().__exit__(exc_type, exc_value, traceback)
