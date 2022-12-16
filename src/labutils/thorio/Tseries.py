@@ -11,75 +11,59 @@ from suite2p import run_plane
 from scipy import stats
 
 
-class FMapTMD(FMappedMetadata):
-    @property
-    def clip(self):
-        return tuple(slice(*c) for c in self._data_d['clip'])
-
-    @clip.setter
-    def clip(self, value):
-        newvals = []
-        for i, (c, d) in enumerate(zip(value, self.shape,)):
-            if c is None:
-                c = (0, d)
-            elif type(c) is not tuple:
-                c = tuple(*c)
-            if abs(c[1]-c[0]) > d:
-                raise ValueError(f"clipping axis {i} with {c} doesn't fit the axis size of {d}")
-            else:
-                newvals.append(c)
-        self._data_d['clip'] = tuple((c.start, c.stop) if type(c) is slice else c for c in newvals)
-
-
 class TExp(_ThorExp):
     data_raw = 'Image_001_001.raw'
     _base_md = {
-        'time': 0,
-        'shape': None,
-        'px2units': None,
+        'time': Incomplete,
+        'shape': Incomplete,
+        'px2units': Incomplete,
+        'zx2um': 1,
         'units': ('s', 'm', 'm', 'm'),
         'nplanes': 1,
-        'totframes': None,
-        'clip': None,
+        'totframes': Incomplete,
+        'clip': False,
         'flyback': False,
         'cellpose_model': None,
         'cell_flow_thr': 0,
         'cell_prob_thr': 0,
-        'cell_diameter': (5.25e-06, 5.25e-06)
+        'cell_diameter': 5.25e-06,
     }
     flyback_heuristics = ((0, (1/3,2/3)), (7/8, (3/4,1)), (1/4, (1/6, 1/3)))
 
     def __init__(self, path, parent, **kwargs):
-        super().__init__(path, parent)
-        self._base_md.update({k: kwargs[k] for k in kwargs if k in TExp._base_md})
+        super().__init__(path, parent, **kwargs)
         self.img
+        self.flyback
 
-    @MemoizedProperty(FMapTMD)
+    @MemoizedProperty(dict)
     def md(self,):
         xml = EL.parse(os.path.join(self.path, self.md_xml))
-        md = {**self._base_md}
-        nplanes = md['nplanes']
-        px2um = 1
-        f2s = 1
-        size = (1,1)
+        nplanes = self._base_md['nplanes']
+        zx2um = self._base_md['zx2um']
+        px2um = Incomplete
+        f2s = Incomplete
+        size = Incomplete
+        utime = Incomplete
+        totframes = Incomplete
         for child in xml.getroot():
             if child.tag == "Date":
-                md['time'] = int(child.get("uTime", 0))
+                utime = int(child.get("uTime", 0))
             elif child.tag == "Timelapse":
-                md['totframes'] = int(child.get("timepoints", 0))
+                totframes = int(child.get("timepoints", 0))
             # elif child.tag == "Magnification":
             #     mag = float(child.get("mag"))
             elif child.tag == "LSM":
                 size = (int(child.get("pixelY",0)), int(child.get("pixelX",0)))
                 px2um = float(child.get("pixelSizeUM",1))
                 f2s = nplanes / float(child.get("frameRate",1))
-        md['shape'] = (md['totframes']//nplanes, nplanes, *size)
-        md['px2units'] = (f2s, 1, 1e-6*px2um, 1e-6*px2um)
-        md['units'] = ('s', '#', 'm', 'm')
-        if not md['flyback']:
-            md['flyback'] = (False, ) * (len(md['shape']) -1)
-        md['cell_diameter_px'] = tuple(d/px2um for d, px2um in zip(md['cell_diameter'], md['px2units'][-2:]))
-        return md
+
+        return {
+            **self._base_md,
+            'time': utime,
+            'shape': (totframes//nplanes, nplanes, *size),
+            'px2units': (f2s, 1e-6*zx2um, 1e-6*px2um, 1e-6*px2um),
+            'totframes': totframes,
+        }
 
     @MemoizedProperty(np.ndarray)
     def Fraw_cells(self):
@@ -91,7 +75,7 @@ class TExp(_ThorExp):
         return stats.zscore(self.Fraw_cells, axis=1, ddof=0)
 
     @MemoizedProperty(np.ndarray)
-    def meanImg(self):
+    def meanImg(self) -> np.ndarray:
         with TerminalHeader(' [Mean image] '):
             out = np.zeros(self.img.shape[1:])
             div = np.zeros(self.img.shape[1:])
@@ -107,8 +91,9 @@ class TExp(_ThorExp):
     def motion_transforms(self) -> np.ndarray:
         with TerminalHeader(' [Motion correction] '):
             import itk
-            print(">>>> making reference...")
             precision =  itk.F
+            print(">>>> making reference...")
+            self.flyback # set flyback just in case
             c = self.img.shape[0] // 2
             center_block = self.img[c-150:c+150:20]
             ptp = np.percentile(center_block, (.5, 99.5))
@@ -199,44 +184,47 @@ class TExp(_ThorExp):
             return transforms
 
     @MemoizedProperty(np.ndarray)
-    def masks_cells(self):
+    def masks_cells(self, cellpose_model, cell_flow_thr, cell_prob_thr, cell_diameter, px2units):
         with TerminalHeader(' [Mask Extraction] '):
             from cellpose.models import CellposeModel
             meanImg = self.meanImg
-            pretrained_model = self.md['cellpose_model']
-            diameter = self.md['cell_diameter_px']
+            diameter = cell_diameter / px2units[-1]
             print(f'>>>> Cell diameter is: {diameter}px')
-            flow_threshold = self.md['cell_flow_thr']
-            cellprob_threshold =self.md['cell_prob_thr']
-            print(f'>>>> Loading cellpose model {pretrained_model}')
-            if not os.path.exists(pretrained_model):
-                model = CellposeModel(model_type=pretrained_model)
+            print(f'>>>> Loading cellpose model {cellpose_model}')
+            if not os.path.exists(cellpose_model):
+                model = CellposeModel(model_type=cellpose_model)
             else:
-                model = CellposeModel(pretrained_model=pretrained_model)
+                model = CellposeModel(pretrained_model=cellpose_model)
             with tqdmlog(meanImg, unit='plane', desc='>>>> Running cellpose') as bar:
                 masks = np.stack([
                 model.eval(
-                    mplane, net_avg=True, channels=[0,0], diameter=diameter[0], 
-                    cellprob_threshold=cellprob_threshold, flow_threshold=flow_threshold)[0]
+                    mplane, net_avg=True, channels=[0,0], diameter=diameter, 
+                    cellprob_threshold=cell_prob_thr, flow_threshold=cell_flow_thr)[0]
                     for mplane in bar
                 ])
+            for masks_plane, mx in zip(masks[1:], np.cumsum(masks.max(axis=(1,2)))):
+                masks_plane[masks_plane > 0] += mx
             print(f'>>>> {masks.max()} masks detected')
             return masks
 
     @MemoizedProperty()
-    def img(self):
-        with TerminalHeader(' [Raw Image & bidiphase correction] '):
-            img_path = os.path.join(self.path, self.data_raw)
-            img = rawTseries(
-                img_path, self.md['shape'], dtype=np.uint16, 
-                flyback=None, clips=self.md['clip']
-            )
-            # claculate the flybacks
-            if self.md['flyback']:
-                flyback = []
-                for i, fb in enumerate(self.md['flyback'], start = 1):
+    def img(self, shape, clip):
+        img_path = os.path.join(self.path, self.data_raw)
+        return rawTseries(
+            img_path, shape, dtype=np.uint16, 
+            flyback=None, clips=clip
+        )
+
+    @MemoizedProperty()
+    def flyback(self, flyback):
+        with TerminalHeader(' [Flyback] '):
+            img = self.img
+            flybacks = None
+            if flyback:
+                flybacks = []
+                for i, fb in enumerate(flyback, start = 1):
                     if type(fb) is int: 
-                        flyback.append(fb)
+                        flybacks.append(fb)
                     elif fb:
                         calculated_flyback = 0
                         pos = 0
@@ -261,12 +249,11 @@ class TExp(_ThorExp):
                         if type(fb) is str:
                             flyback_arr = self.get_flyback_fun(*fb.split(' '))
                             calculated_flyback = flyback_arr(calculated_flyback, pos, img.shape[i])
-                        flyback.append(calculated_flyback)
+                        flybacks.append(calculated_flyback)
                     else:
-                        flyback.append(0)
-                img.flyback = tuple(flyback)
-            #self.md['flyback'] = tuple(flyback)
-            return img
+                        flybacks.append(0)
+                img.flyback = tuple(flybacks)
+            return flybacks
 
     @staticmethod
     def get_flyback_fun(*args):

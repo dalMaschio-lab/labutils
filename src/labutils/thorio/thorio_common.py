@@ -29,4 +29,11 @@ class _ThorExp():
     def __init__(self, path, parent: "_Model | None", **kwargs):
         self.path = path
         self.parent = parent
+        self._base_md.update({k: kwargs[k] for k in kwargs if k in self._base_md})
+        self.md.flush()
+
+    def override(self, **kwargs):
+        tuple(setattr(self.md, k, kwargs[k]) for k in kwargs if k in self._base_md)
     
+    def md(self):
+        return self._base_md()

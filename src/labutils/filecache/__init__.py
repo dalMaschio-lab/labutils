@@ -5,34 +5,40 @@ if TYPE_CHECKING:
 else:
     from typing import Any as Incomplete
 import atexit, os, json, inspect
+from collections.abc import Callable
+from typing import Any
 import numpy as np
+from numpy._typing import ArrayLike
 
 
-class _FMappedBase(object):
-    pass
-
-class FMappedObj(_FMappedBase):
+class FMappedObj(object):
     def __new__(cls, obj, path):
-        return obj
+        if cls is FMappedObj:
+            return obj
+        else:
+            return super().__new__(cls)
     
     @classmethod
     def fromfile(cls, path):
         raise FileNotFoundError
 
+    def flush(self):
+        pass
 
-class FMappedArray(_FMappedBase, np.memmap):
+
+class FMappedArray(FMappedObj, np.memmap):
     def __new__(cls, arr, path):
         np.save(path + '.npy', arr)
         return np.load(path + '.npy', mmap_mode='r+').view(cls)
 
     @classmethod
-    def fromfile(cls, path):
+    def fromfile(cls, path) -> "FMappedArray":
         return np.load(path + '.npy', mmap_mode='r+').view(cls)
 
 
-class FMappedMetadata(_FMappedBase):
-    buffer = None
-    _data_d = {}
+class FMappedMetadata(FMappedObj):
+    buffer = Incomplete
+    _data_d = Incomplete
     # def __new__(cls, obj, path):
     #     inst = super().__new__(cls)
     #     inst._data_d = {}
@@ -51,7 +57,7 @@ class FMappedMetadata(_FMappedBase):
 
     @classmethod
     def fromfile(cls, path):
-        inst = super().__new__(cls)
+        inst = object.__new__(cls)
         inst._data_d = {}
         path = path + '.json'
         inst.buffer = open(path, 'r+')
@@ -65,7 +71,7 @@ class FMappedMetadata(_FMappedBase):
         self.buffer.flush()
 
     def __del__(self):
-        if self.buffer:
+        if self.buffer is not Incomplete:
             self.flush()
             self.buffer.close()
 
@@ -91,46 +97,67 @@ class FMappedMetadata(_FMappedBase):
     def __setitem__(self, name, value):
         self.__setattr__(name, value)
 
-memtypes = {
-    np.ndarray: FMappedArray,
-    dict: FMappedMetadata,
-}
 
 class MemoizedProperty(object):
-    __slots__ = 'name', 'function', 'memobj'
+    __slots__ = 'name', 'function', 'user_return_type', 'memobj', 'f_args_names'
     # builder
-    def __init__(self, memtype=FMappedObj):
-        self.function = None
-        self.name = None
-        if isinstance(memtype, _FMappedBase):
-            self.memobj = memtype
-        else:
-            self.memobj = memtypes[memtype]
-    
+    def __init__(self, return_type: type=Incomplete, to_file=True, ):
+        self.function: Callable = Incomplete
+        self.name: str = Incomplete
+        self.user_return_type = return_type if to_file else inspect._empty
+        self.memobj = Incomplete
+        self.f_args_names: tuple[str] = Incomplete
+
     # actual registration of function site
     def __call__(self, fn):
         self.function = fn
+        sig = inspect.signature(fn)
+        if self.user_return_type is Incomplete:
+            self.user_return_type = sig.return_annotation
+        if issubclass( self.user_return_type, np.ndarray):
+            self.memobj = FMappedArray
+        elif issubclass( self.user_return_type, dict):
+            self.memobj = FMappedMetadata
+        else:
+            self.memobj = FMappedObj
+        self.f_args_names = tuple(name for name in sig.parameters if name != 'self')
         return self
 
     def __set_name__(self, owner, name):
         self.name = '_' + name
 
     def __get__(self, instance, owner):
-        #print(f"{self}({self.name}).__get__ called with {instance} and {owner}")
         if self.name and self.function:
-            #print(f"{instance}.__dict__ is {instance.__dict__}")
             try:
                 return instance.__dict__[self.name]
             except KeyError:
-                try:
-                    tmp = self.memobj.fromfile(os.path.join(instance.path, self.name))
-                except FileNotFoundError:
-                    tmp = self.memobj(self.function(instance), os.path.join(instance.path, self.name))
+                if self.name == '_md':
+                    instance_args = {}
+                else:
+                    instance_args = {name: instance.md[name] for name in self.f_args_names}
+            try:
+                tmp = self.memobj.fromfile(os.path.join(instance.path, self.name))
+                if instance_args:
+                    # try:
+                    with open(os.path.join(instance.path, self.name + '_args.json')) as fd:
+                        saved_args = {k: tuple(i) if type(i) is list else i for k, i in json.load(fd).items()}
+                    # except FileNotFoundError:
+                    #     with open(os.path.join(instance.path, self.name + '_args.json'), 'w') as fd:
+                    #         json.dump(instance_args, fd)
+                    #     saved_args = instance_args
+                    for k in instance_args:
+                        assert(saved_args[k] == instance_args[k])
+            except Exception:
+                tmp = self.memobj(self.function(instance, **instance_args), os.path.join(instance.path, self.name))
+                if self.memobj is not FMappedObj:
                     tmp.flush()
-                instance.__dict__[self.name] = tmp
-                return tmp
+                    if instance_args: 
+                        with open(os.path.join(instance.path, self.name + '_args.json'), 'w') as fd:
+                            json.dump(instance_args, fd)
+            instance.__dict__[self.name] = tmp
+            return tmp
         else:
-            raise Exception()
+            raise Exception(f"MemProperty name is {self.name}, function is {self.function}, called by {instance} in class {owner}")
 
 # class Test(FMappedMetadata):
 #     @property

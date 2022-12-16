@@ -10,7 +10,7 @@ class rawTseries(np.memmap):
         if clips is None:
             clips = Ellipsis
         elif isinstance(clips, (tuple, list, np.ndarray)):
-            clips = tuple(clips)
+            clips = tuple(slice(*c) if c else slice(0,s) for c, s in zip(clips, shape))
         else:
             clips = (clips,)
 
