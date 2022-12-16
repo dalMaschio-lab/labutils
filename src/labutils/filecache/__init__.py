@@ -1,3 +1,9 @@
+from __future__ import annotations
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from _typeshed import Incomplete
+else:
+    from typing import Any as Incomplete
 import atexit, os, json, inspect
 import numpy as np
 

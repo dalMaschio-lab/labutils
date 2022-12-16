@@ -1,4 +1,4 @@
-from .thorio_common import _ThorExp
+from .thorio_common import _ThorExp, Incomplete
 from ..filecache import MemoizedProperty
 import numpy as np
 from xml.etree import ElementTree as EL

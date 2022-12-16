@@ -1,3 +1,9 @@
+from __future__ import annotations
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from _typeshed import Incomplete
+else:
+    from typing import Any as Incomplete
 import os, json
 import numpy as np
 
@@ -18,9 +24,9 @@ class _Model:
 
 
 class _ThorExp():
-    md_json = "metadata.json"
-    md_xml = "Experiment.xml"
-    def __init__(self, path, parent: _Model,):
+    _base_md = Incomplete
+    md_xml = 'Experiment.xml'
+    def __init__(self, path, parent: "_Model | None", **kwargs):
         self.path = path
         self.parent = parent
     

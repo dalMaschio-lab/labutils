@@ -1,6 +1,6 @@
 import numpy as np
 import itertools
-
+from typing import Any
 
 class rawTseries(np.memmap):
     def __new__(subtype, filename, shape, clips=None, flyback=None, chunksize=None, dtype=np.uint16, **kwargs):
@@ -54,7 +54,7 @@ class rawTseries(np.memmap):
         else:
             raise ValueError('flyback should be a tuple for each axis except the first')
 
-    def _process_indexes(self, ixs) -> 'tuple[slice | int]':
+    def _process_indexes(self, ixs) -> 'tuple[slice | Any]':
         if ixs is ...:
             return (slice(None), ) * self.ndim
         elif type(ixs) is not tuple:
@@ -82,7 +82,7 @@ class rawTseries(np.memmap):
                 if type(k) is slice:
                     st0 = k
                     st1 = slice(None)
-                elif isinstance(k, (int, np.int_)):
+                elif isinstance(k, (int, np.signedinteger)):
                     k = k if k >= 0 else s+k
                     st0 = slice(k, k+1,)
                     st1 = 0

@@ -1,5 +1,5 @@
-from .thorio_common import _ThorExp
-from ..filecache import MemoizedProperty, FMappedMetadata
+from .thorio_common import _ThorExp, Incomplete
+from ..filecache import FMappedArray, MemoizedProperty, FMappedMetadata
 from .mapwrap import rawTseries
 from ..utils import detect_bidi_offset, TerminalHeader, tqdmlog
 import numpy as np
