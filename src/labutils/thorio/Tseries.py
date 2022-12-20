@@ -1,14 +1,14 @@
 from .thorio_common import _ThorExp, Incomplete
-from ..filecache import FMappedArray, MemoizedProperty, FMappedMetadata
+from ..filecache import MemoizedProperty
 from .mapwrap import rawTseries
 from ..utils import detect_bidi_offset, TerminalHeader, tqdmlog
 import numpy as np
 from xml.etree import ElementTree as EL
 import os, copy, time
 from math import prod
-from suite2p import run_plane
 # from tqdm.auto import trange, tqdm
 from scipy import stats
+import numba
 
 
 class TExp(_ThorExp):
@@ -244,53 +244,35 @@ class TExp(_ThorExp):
             print(f'>>>> {masks.max()} masks detected')
             return masks
 
-    @MemoizedProperty()
-    def img(self, shape, clip):
-        img_path = os.path.join(self.path, self.data_raw)
-        return rawTseries(
-            img_path, shape, dtype=np.uint16, 
-            flyback=None, clips=clip
-        )
+    @MemoizedProperty().depends_on(masks_cells)
+    def center_cells(self, ):
+        with TerminalHeader(' [Position of center of cells] '):
+            cell_pos = np.empty((self.masks_cells.max()-1, 3))
+            with tqdmlog(np.arange(1, self.masks_cells.max()), desc='>>>> extracting cell shaps from masks', unit='ROIs') as bar:
+                for n in bar:
+                    cell_pos[n, :] = np.mean(np.where(self.masks_cells == n), axis=1)
+        return cell_pos
 
-    @MemoizedProperty()
-    def flyback(self, flyback):
-        with TerminalHeader(' [Flyback] '):
-            img = self.img
-            flybacks = None
-            if flyback:
-                flybacks = []
-                for i, fb in enumerate(flyback, start = 1):
-                    if type(fb) is int: 
-                        flybacks.append(fb)
-                    elif fb:
-                        calculated_flyback = 0
-                        pos = 0
-                        for poss, (frac0, frac1) in self.flyback_heuristics:
-                        # don't start from the beginning just in case
-                            tmp = img[img.shape[0]//3:, ..., int(frac0*img.shape[-1]):int(frac1*img.shape[-1])]
-                            print(f'>>>> Calculating flyback for axis {i} ', end='')
-                            print('with ' + fb if type(fb) is str else "constant" + 'evolution...')
-                            cf = detect_bidi_offset(
-                                tmp[::prod(tmp.shape[:i])//3000, ...] # take enough to have ~3000 lines
-                                .mean(axis=tuple(range(i+1, img.ndim))) # average axes below 
-                                .reshape((-1,  tmp.shape[i])), # reshape to have a rank 2 image 
-                            )
-                            print(f'>>>> found flyback {cf}px ')
-                            if cf > 10:
-                                calculated_flyback = cf
-                                pos = poss
-                                break
-                            if cf > calculated_flyback:
-                                calculated_flyback = cf
-                                pos = poss
-                        if type(fb) is str:
-                            flyback_arr = self.get_flyback_fun(*fb.split(' '))
-                            calculated_flyback = flyback_arr(calculated_flyback, pos, img.shape[i])
-                        flybacks.append(calculated_flyback)
-                    else:
-                        flybacks.append(0)
-                img.flyback = tuple(flybacks)
-            return flybacks
+    @MemoizedProperty(np.ndarray).depends_on(masks_cells, img, motion_transforms, flyback)
+    def Fraw_cells(self):
+        with TerminalHeader(' [Fluorescence traces extraction] '):
+            Fraw = np.empty((self.img.shape[0], self.masks_cells.max() - 1),)
+            print(f'>>>> Making cells indexes from masks')
+            cells_idxs = numba.typed.List(np.where(self.masks_cells.reshape(-1) == i+1)[0] for i in range(Fraw.shape[-1]))
+            with tqdmlog(zip(self.img, np.round(self.motion_transforms).astype(np.intp), Fraw), desc='>>>> extracting traces', total=self.img.shape[0], unit='frames') as bar:
+                for frame, ttt, fraw in bar:
+                    extended_frame = np.empty_like(frame, dtype=np.float32)
+                    extended_frame.fill(np.NaN)
+                    outslices, frameslices = self.motionslices(ttt)
+                    extended_frame[outslices] = frame[frameslices]
+                    self.extract_traces(extended_frame.reshape(-1), cells_idxs, fraw)
+            number_pix = tuple(idxs.size for idxs in cells_idxs)
+            Fraw /= np.tile(number_pix, (self.img.shape[0], 1))
+        return Fraw.T
+
+    @MemoizedProperty().depends_on(Fraw_cells)
+    def Fzscore_cells(self):
+        return stats.zscore(self.Fraw_cells, axis=1, ddof=0, nan_policy='omit')
 
     @staticmethod
     def get_flyback_fun(*args):
@@ -306,3 +288,12 @@ class TExp(_ThorExp):
         frameslices = tuple(slice(t, None) if t>=0 else slice(t) for t in shifts)
         return outslices, frameslices
 
+    @staticmethod
+    @numba.njit(parallel=True)
+    def extract_traces(frame: np.ndarray, cells_idx: numba.typed.List, out: np.ndarray):
+        for n in numba.prange(out.shape[0]):
+            out[n] = np.sum(frame[cells_idx[n]])
+
+    # @staticmethod
+    # def extract_traces_p(frame: np.ndarray, cells_idx: numba.typed.List, out: np.ndarray):
+    #     out[:] = tuple(frame[idx].sum() for idx in cells_idx)
