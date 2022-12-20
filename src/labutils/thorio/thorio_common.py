@@ -1,5 +1,7 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
+
+from labutils.filecache import MemoizedProperty
 if TYPE_CHECKING:
     from _typeshed import Incomplete
 else:
@@ -30,10 +32,16 @@ class _ThorExp():
         self.path = path
         self.parent = parent
         self._base_md.update({k: kwargs[k] for k in kwargs if k in self._base_md})
+        [
+            setattr(self.md, k, i)
+            for k, i in self.__class__.__dict__['md'].function(self).items()
+            if not k in self.md._data_d
+        ]
         self.md.flush()
 
     def override(self, **kwargs):
         tuple(setattr(self.md, k, kwargs[k]) for k in kwargs if k in self._base_md)
     
+    @MemoizedProperty()
     def md(self):
         return self._base_md()
