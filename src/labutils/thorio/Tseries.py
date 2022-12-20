@@ -65,29 +65,55 @@ class TExp(_ThorExp):
             'totframes': totframes,
         }
 
-    @MemoizedProperty(np.ndarray)
-    def Fraw_cells(self):
-        # TODO: extract from masks from motion corrected movie
-        return
-
     @MemoizedProperty()
-    def Fzscore_cells(self):
-        return stats.zscore(self.Fraw_cells, axis=1, ddof=0)
+    def img(self, shape, clip):
+        img_path = os.path.join(self.path, self.data_raw)
+        return rawTseries(
+            img_path, shape, dtype=np.uint16, 
+            flyback=None, clips=clip
+        )
 
-    @MemoizedProperty(np.ndarray)
-    def meanImg(self) -> np.ndarray:
-        with TerminalHeader(' [Mean image] '):
-            out = np.zeros(self.img.shape[1:])
-            div = np.zeros(self.img.shape[1:])
-            with tqdmlog(zip(self.img, np.round(self.motion_transforms).astype(np.intp)), desc='>>>> calculating mean offsets', total=self.img.shape[0], unit='frames') as bar:
-                for frame, ttt in bar:
-                    outslices = tuple(slice(-t) if t>0 else slice(-t, None) for t in ttt )
-                    frameslices = tuple(slice(t, None) if t>=0 else slice(t) for t in ttt)
-                    out[outslices] += frame[frameslices]
-                    div[outslices] += 1.0
-            return out / div
+    @MemoizedProperty().depends_on(img)
+    def flyback(self, flyback):
+        with TerminalHeader(' [Flyback] '):
+            img = self.img
+            flybacks = None
+            if flyback:
+                flybacks = []
+                for i, fb in enumerate(flyback, start = 1):
+                    if type(fb) is int: 
+                        flybacks.append(fb)
+                    elif fb:
+                        calculated_flyback = 0
+                        pos = 0
+                        for poss, (frac0, frac1) in self.flyback_heuristics:
+                        # don't start from the beginning just in case
+                            tmp = img[img.shape[0]//3:, ..., int(frac0*img.shape[-1]):int(frac1*img.shape[-1])]
+                            print(f'>>>> Calculating flyback for axis {i} ', end='')
+                            print('with ' + fb if type(fb) is str else "constant" + 'evolution...')
+                            cf = detect_bidi_offset(
+                                tmp[::prod(tmp.shape[:i])//3000, ...] # take enough to have ~3000 lines
+                                .mean(axis=tuple(range(i+1, img.ndim))) # average axes below 
+                                .reshape((-1,  tmp.shape[i])), # reshape to have a rank 2 image 
+                            )
+                            print(f'>>>> found flyback {cf}px ')
+                            if cf > 10:
+                                calculated_flyback = cf
+                                pos = poss
+                                break
+                            if cf > calculated_flyback:
+                                calculated_flyback = cf
+                                pos = poss
+                        if type(fb) is str:
+                            flyback_arr = self.get_flyback_fun(*fb.split(' '))
+                            calculated_flyback = flyback_arr(calculated_flyback, pos, img.shape[i])
+                        flybacks.append(calculated_flyback)
+                    else:
+                        flybacks.append(0)
+                img.flyback = tuple(flybacks)
+            return flybacks
     
-    @MemoizedProperty(np.ndarray)
+    @MemoizedProperty(np.ndarray).depends_on(flyback, img)
     def motion_transforms(self) -> np.ndarray:
         with TerminalHeader(' [Motion correction] '):
             import itk
@@ -183,11 +209,22 @@ class TExp(_ThorExp):
             np.save(os.path.join(self.path, 'reg_param'), reg_param)
             return transforms
 
-    @MemoizedProperty(np.ndarray)
+    @MemoizedProperty(np.ndarray).depends_on(motion_transforms, flyback, img)
+    def meanImg(self) -> np.ndarray:
+        with TerminalHeader(' [Mean image] '):
+            out = np.zeros(self.img.shape[1:])
+            div = np.zeros(self.img.shape[1:])
+            with tqdmlog(zip(self.img, np.round(self.motion_transforms).astype(np.intp)), desc='>>>> calculating mean offsets', total=self.img.shape[0], unit='frames') as bar:
+                for frame, ttt in bar:
+                    outslices, frameslices = self.motionslices(ttt)
+                    out[outslices] += frame[frameslices]
+                    div[outslices] += 1.0
+            return out / div
+
+    @MemoizedProperty(np.ndarray).depends_on(meanImg)
     def masks_cells(self, cellpose_model, cell_flow_thr, cell_prob_thr, cell_diameter, px2units):
         with TerminalHeader(' [Mask Extraction] '):
             from cellpose.models import CellposeModel
-            meanImg = self.meanImg
             diameter = cell_diameter / px2units[-1]
             print(f'>>>> Cell diameter is: {diameter}px')
             print(f'>>>> Loading cellpose model {cellpose_model}')
@@ -195,7 +232,7 @@ class TExp(_ThorExp):
                 model = CellposeModel(model_type=cellpose_model)
             else:
                 model = CellposeModel(pretrained_model=cellpose_model)
-            with tqdmlog(meanImg, unit='plane', desc='>>>> Running cellpose') as bar:
+            with tqdmlog(self.meanImg, unit='plane', desc='>>>> Running cellpose') as bar:
                 masks = np.stack([
                 model.eval(
                     mplane, net_avg=True, channels=[0,0], diameter=diameter, 
@@ -263,4 +300,9 @@ class TExp(_ThorExp):
         ptp_ratio = float(args[-1])
         return lambda A, pos, size: A * (fun(np.linspace(-(tmp:=np.arccos(ptp_ratio)), tmp, size)) + (pos)*(1-ptp_ratio))
     
+    @staticmethod
+    def motionslices(shifts):
+        outslices = tuple(slice(-t) if t>0 else slice(-t, None) for t in shifts )
+        frameslices = tuple(slice(t, None) if t>=0 else slice(t) for t in shifts)
+        return outslices, frameslices
 

@@ -99,14 +99,15 @@ class FMappedMetadata(FMappedObj):
 
 
 class MemoizedProperty(object):
-    __slots__ = 'name', 'function', 'user_return_type', 'memobj', 'f_args_names'
+    __slots__ = 'name', 'function', 'user_return_type', 'memobj', 'f_args_names', 'd_args_names'
     # builder
     def __init__(self, return_type: type=Incomplete, to_file=True, ):
         self.function: Callable = Incomplete
         self.name: str = Incomplete
         self.user_return_type = return_type if to_file else inspect._empty
         self.memobj = Incomplete
-        self.f_args_names: tuple[str] = Incomplete
+        self.f_args_names: set[str] = set()
+        self.d_args_names: set[str] = set()
 
     # actual registration of function site
     def __call__(self, fn):
@@ -120,39 +121,46 @@ class MemoizedProperty(object):
             self.memobj = FMappedMetadata
         else:
             self.memobj = FMappedObj
-        self.f_args_names = tuple(name for name in sig.parameters if name != 'self')
+        self.f_args_names.update(name for name in sig.parameters if name != 'self')
         return self
 
     def __set_name__(self, owner, name):
         self.name = '_' + name
+
+    def depends_on(self, *other_fns):
+        for other_fn in other_fns:
+            self.d_args_names.update(other_fn.f_args_names)
+            self.d_args_names.update(other_fn.d_args_names)
+        return self
 
     def __get__(self, instance, owner):
         if self.name and self.function:
             try:
                 return instance.__dict__[self.name]
             except KeyError:
+                cachepath: Any = getattr(instance, 'cachepath', instance.path)
                 if self.name == '_md':
                     instance_args = {}
                 else:
-                    instance_args = {name: instance.md[name] for name in self.f_args_names}
+                    instance_args = {name: instance.md[name] for name in self.f_args_names.union(self.d_args_names)}
             try:
-                tmp = self.memobj.fromfile(os.path.join(instance.path, self.name))
+                tmp = self.memobj.fromfile(os.path.join(cachepath, self.name))
                 if instance_args:
                     # try:
-                    with open(os.path.join(instance.path, self.name + '_args.json')) as fd:
+                    with open(os.path.join(cachepath, self.name + '_args.json')) as fd:
                         saved_args = {k: tuple(i) if type(i) is list else i for k, i in json.load(fd).items()}
                     # except FileNotFoundError:
-                    #     with open(os.path.join(instance.path, self.name + '_args.json'), 'w') as fd:
+                    #     with open(os.path.join(cachepath, self.name + '_args.json'), 'w') as fd:
                     #         json.dump(instance_args, fd)
-                    #     saved_args = instance_args
+                        saved_args = instance_args
                     for k in instance_args:
                         assert(saved_args[k] == instance_args[k])
             except Exception:
-                tmp = self.memobj(self.function(instance, **instance_args), os.path.join(instance.path, self.name))
+                tmp = self.memobj(self.function(instance, **{k: instance_args[k] for k in self.f_args_names}), os.path.join(cachepath, self.name))
                 if self.memobj is not FMappedObj:
                     tmp.flush()
                     if instance_args: 
-                        with open(os.path.join(instance.path, self.name + '_args.json'), 'w') as fd:
+                        with open(os.path.join(cachepath, self.name + '_args.json'), 'w') as fd:
                             json.dump(instance_args, fd)
             instance.__dict__[self.name] = tmp
             return tmp
