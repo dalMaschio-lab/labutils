@@ -49,12 +49,21 @@ class OdorEvokedTExp(TExp):
             if self.sosfilter is None:
                 self.cells_clean = self.cells
             else:
+                print('filter found')
                 self.cells_clean = signal.sosfiltfilt(self.sosfilter, self.cells, axis=1)
         self._zscore = stats.zscore(self.cells_clean, axis=1, ddof=0)
         # print("has nan before filter: ", np.any(np.isnan(self.cells), axis=1).sum())
         # print("has nan after filter: ", np.any(np.isnan(self.cells_clean), axis=1).sum())
         # print("has nan after zscore: ", np.any(np.isnan(zscore), axis=1).sum())
         return self._zscore[~np.any(np.isnan(self._zscore), axis=1)]
+
+    @property
+    def nanzscore(self):
+        if '_zscore' in self.__dict__:
+            return ~np.any(np.isnan(self._zscore), axis=1)
+        else:
+            self._zscore = stats.zscore(self.cells, axis=1, ddof=0)
+            return ~np.any(np.isnan(self._zscore), axis=1)
 
     @property
     def fold_zscore(self):
