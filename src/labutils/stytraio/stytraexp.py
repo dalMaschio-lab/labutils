@@ -15,17 +15,32 @@ class Stytraexp(object):
             self.load_cache()
         except Exception as e:
             print(e)
-            num_segments = self.md["tracking+fish_tracking"]["n_segments"]-1 if "tracking+fish_tracking" in self.md else self.md['tracking+tail_tracking']['n_output_segments']
-            hd, data = self.load_csv(os.path.join(path, f"{session_id}_behavior_log.csv"))
-            hs, stim = self.load_csv(os.path.join(path, f"{session_id}_stimulus_log.csv"))
-            self.clip_first = np.argwhere(data[:,hd['t']] >= 0)[0][0]
-            print(f"tracking 0 found at: {self.clip_first}")
-            data = data[self.clip_first:, ...]
-            t = data[:,hd['t']]
+            try:
+                num_segments = self.md["tracking+fish_tracking"]["n_segments"]-1 if "tracking+fish_tracking" in self.md else self.md['tracking+tail_tracking']['n_output_segments']
+            except KeyError:
+                num_segments = None
+            try:
+                hd, data = self.load_csv(os.path.join(path, f"{session_id}_behavior_log.csv"))
+                self.clip_first = np.argwhere(data[:,hd['t']] >= 0)[0][0]
+                print(f"tracking 0 found at: {self.clip_first}")
+                data = data[self.clip_first:, ...]
+            except:
+                hd, data = [], None
+                self.clip_first = 0
+            try:
+                hs, stim = self.load_csv(os.path.join(path, f"{session_id}_stimulus_log.csv"))
+            except:
+                hs, stim = [], None
+            try:
+                t = data[:,hd['t']]
+            except:
+                t = stim[:,hs['t']]
             # idx = self.find_closest_time(t, stim[:,hs['t']])
             # stim_ondata = stim[idx, ...]
             self.t = np.linspace(t[0], t[-1], t.size)
             for keys, arr in ((hd, data),(hs, stim)):
+                if arr is None:
+                    continue
                 t_prime = arr[:,keys['t']].copy()
                 arr = interpolate.interp1d(t_prime, arr, axis=0, assume_sorted=True, bounds_error=False)(self.t)
                 for k, i in keys.items():
