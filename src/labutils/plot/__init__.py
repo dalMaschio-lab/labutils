@@ -1,4 +1,4 @@
-import labutils.plot.tol_colors as tolc
+from . import tol_colors as tolc
 import os
 import itertools as it
 import numpy as np

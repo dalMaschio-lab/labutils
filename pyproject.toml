@@ -23,9 +23,8 @@ dependencies = [
     "vedo",
     "scikit-learn",
     "requests",
-    "pynrrd",
-    "suite2p",
     "cellpose",
+    "itk",
 ]
 
 [project.urls]
