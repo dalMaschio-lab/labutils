@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 if TYPE_CHECKING:
     from _typeshed import Incomplete
 else:
@@ -10,13 +10,17 @@ from typing import Any
 import numpy as np
 from numpy._typing import ArrayLike
 
+class _FMappedBase(Protocol):
+    @classmethod
+    def fromfile(cls, path) -> Any: ...
+    def flush(self) -> None: ...
 
-class FMappedObj(object):
-    def __new__(cls, obj, path):
-        if cls is FMappedObj:
-            return obj
-        else:
-            return super().__new__(cls)
+class FMappedObj(_FMappedBase):
+    def __new__(cls, obj: Any, path) -> Any:
+        return obj
+
+    def __init__(self, obj, path) -> None:
+        raise NotImplementedError
     
     @classmethod
     def fromfile(cls, path):
@@ -26,17 +30,17 @@ class FMappedObj(object):
         pass
 
 
-class FMappedArray(FMappedObj, np.memmap):
-    def __new__(cls, arr, path):
+class FMappedArray(np.memmap, _FMappedBase):
+    def __new__(cls, arr, path) -> FMappedArray:
         np.save(path + '.npy', arr)
         return np.load(path + '.npy', mmap_mode='r+').view(cls)
 
     @classmethod
-    def fromfile(cls, path) -> "FMappedArray":
+    def fromfile(cls, path) -> FMappedArray:
         return np.load(path + '.npy', mmap_mode='r+').view(cls)
 
 
-class FMappedMetadata(FMappedObj):
+class FMappedMetadata(_FMappedBase):
     buffer = Incomplete
     _data_d = Incomplete
     # def __new__(cls, obj, path):
@@ -98,29 +102,33 @@ class FMappedMetadata(FMappedObj):
         self.__setattr__(name, value)
 
 
-class MemoizedProperty(object):
-    __slots__ = 'name', 'function', 'user_return_type', 'memobj', 'f_args_names', 'd_args_names'
+class MemoizedProperty:
+    __slots__ = 'name', 'function', 'memobj', 'f_args_names', 'd_args_names'
     # builder
     def __init__(self, return_type: type=Incomplete, to_file=True, ):
         self.function: Callable = Incomplete
         self.name: str = Incomplete
-        self.user_return_type = return_type if to_file else inspect._empty
-        self.memobj = Incomplete
+        self.memobj = self._return2memobj(return_type if to_file else inspect._empty)
         self.f_args_names: set[str] = set()
         self.d_args_names: set[str] = set()
+
+    @staticmethod
+    def _return2memobj(return_type: type):
+        if issubclass(return_type, np.ndarray):
+            return FMappedArray
+        elif issubclass(return_type, dict):
+            return FMappedMetadata
+        elif return_type is Incomplete: # defer
+            return Incomplete
+        else:
+            return FMappedObj
 
     # actual registration of function site
     def __call__(self, fn):
         self.function = fn
         sig = inspect.signature(fn)
-        if self.user_return_type is Incomplete:
-            self.user_return_type = sig.return_annotation
-        if issubclass( self.user_return_type, np.ndarray):
-            self.memobj = FMappedArray
-        elif issubclass( self.user_return_type, dict):
-            self.memobj = FMappedMetadata
-        else:
-            self.memobj = FMappedObj
+        if self.memobj is Incomplete:
+           self.memobj = self._return2memobj(sig.return_annotation)
         self.f_args_names.update(name for name in sig.parameters if name != 'self')
         return self
 
@@ -139,10 +147,7 @@ class MemoizedProperty(object):
                 return instance.__dict__[self.name]
             except KeyError:
                 cachepath: Any = getattr(instance, 'cachepath', instance.path)
-                if self.name == '_md':
-                    instance_args = {}
-                else:
-                    instance_args = {name: instance.md[name] for name in self.f_args_names.union(self.d_args_names)}
+                instance_args = {name: instance.md[name] for name in self.f_args_names.union(self.d_args_names)}
             try:
                 tmp = self.memobj.fromfile(os.path.join(cachepath, self.name))
                 if instance_args:
@@ -152,9 +157,8 @@ class MemoizedProperty(object):
                     # except FileNotFoundError:
                     #     with open(os.path.join(cachepath, self.name + '_args.json'), 'w') as fd:
                     #         json.dump(instance_args, fd)
-                        saved_args = instance_args
-                    for k in instance_args:
-                        assert(saved_args[k] == instance_args[k])
+                    #    saved_args = instance_args
+                    assert(saved_args == instance_args)
             except Exception:
                 tmp = self.memobj(self.function(instance, **{k: instance_args[k] for k in self.f_args_names}), os.path.join(cachepath, self.name))
                 if self.memobj is not FMappedObj:
