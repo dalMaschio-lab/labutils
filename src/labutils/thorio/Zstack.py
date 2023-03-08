@@ -52,7 +52,7 @@ class ZExp(_ThorExp):
                 steps = int(child.get("steps", 0))
                 z2um = -float(child.get("stepSizeUM", 1))
         return {
-            **self._base_md,
+            **self._pre_md,
             'shape': (steps, *size),
             'px2units': (1e-3*z2um, 1e-3*px2um, 1e-3*px2um, ),
             'time': utime,

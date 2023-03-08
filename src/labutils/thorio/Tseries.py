@@ -1,5 +1,5 @@
 from .thorio_common import _ThorExp, Incomplete
-from ..filecache import MemoizedProperty
+from ..filecache import FMappedArray, MemoizedProperty
 from .mapwrap import rawTseries
 from ..utils import detect_bidi_offset, TerminalHeader, tqdmlog
 import numpy as np
@@ -38,8 +38,8 @@ class TExp(_ThorExp):
     @MemoizedProperty(dict)
     def md(self,):
         xml = EL.parse(os.path.join(self.path, self.md_xml))
-        nplanes = self._base_md['nplanes']
-        zx2um = self._base_md['zx2um']
+        nplanes = self._pre_md['nplanes']
+        zx2um = self._pre_md['zx2um']
         px2um = Incomplete
         f2s = Incomplete
         size = Incomplete
@@ -58,63 +58,63 @@ class TExp(_ThorExp):
                 f2s = nplanes / float(child.get("frameRate",1))
 
         return {
-            **self._base_md,
+            **self._pre_md,
             'time': utime,
             'shape': (totframes//nplanes, nplanes, *size),
             'px2units': (f2s, 1e-6*zx2um, 1e-6*px2um, 1e-6*px2um),
             'totframes': totframes,
         }
 
-    @MemoizedProperty()
+    @MemoizedProperty(to_file=False)
     def img(self, shape, clip):
         img_path = os.path.join(self.path, self.data_raw)
         return rawTseries(
             img_path, shape, dtype=np.uint16, 
-            flyback=None, clips=clip
+            flyback=None, clips=clip,
         )
 
-    @MemoizedProperty().depends_on(img)
-    def flyback(self, flyback):
+    @MemoizedProperty(to_file=False).depends_on(img)
+    def flyback(self, flyback) -> tuple:
         with TerminalHeader(' [Flyback] '):
-            img = self.img
-            flybacks = None
+            img: rawTseries = self.img
+            flybacks = ()
             if flyback:
                 flybacks = []
                 for i, fb in enumerate(flyback, start = 1):
                     if type(fb) is int: 
-                        flybacks.append(fb)
+                        fb = ('const', None, fb)
                     elif fb:
-                        calculated_flyback = 0
-                        pos = 0
-                        for poss, (frac0, frac1) in self.flyback_heuristics:
-                        # don't start from the beginning just in case
-                            tmp = img[img.shape[0]//3:, ..., int(frac0*img.shape[-1]):int(frac1*img.shape[-1])]
-                            print(f'>>>> Calculating flyback for axis {i} ', end='')
-                            print('with ' + fb if type(fb) is str else "constant" + 'evolution...')
-                            cf = detect_bidi_offset(
-                                tmp[::prod(tmp.shape[:i])//3000, ...] # take enough to have ~3000 lines
-                                .mean(axis=tuple(range(i+1, img.ndim))) # average axes below 
-                                .reshape((-1,  tmp.shape[i])), # reshape to have a rank 2 image 
-                            )
-                            print(f'>>>> found flyback {cf}px ')
-                            if cf > 10:
-                                calculated_flyback = cf
-                                pos = poss
-                                break
-                            if cf > calculated_flyback:
-                                calculated_flyback = cf
-                                pos = poss
-                        if type(fb) is str:
-                            flyback_arr = self.get_flyback_fun(*fb.split(' '))
-                            calculated_flyback = flyback_arr(calculated_flyback, pos, img.shape[i])
-                        flybacks.append(calculated_flyback)
+                        flyback_arr = self.get_flyback_fun(*fb)
+                        calculated_flyback = fb[-1]
+                        pos = self.flyback_heuristics[0][0]
+                        if calculated_flyback is None:
+                            calculated_flyback = 0
+                            for poss, (frac0, frac1) in self.flyback_heuristics:
+                            # don't start from the beginning just in case
+                                tmp = img[img.shape[0]//3:, ..., int(frac0*img.shape[-1]):int(frac1*img.shape[-1])]
+                                print(f'>>>> Calculating flyback for axis {i} with {fb[0]} evolution...')
+                                cf = detect_bidi_offset(
+                                    tmp[::prod(tmp.shape[:i])//3000, ...] # take enough to have ~3000 lines
+                                    .mean(axis=tuple(range(i+1, img.ndim))) # average axes below 
+                                    .reshape((-1,  tmp.shape[i])), # reshape to have a rank 2 image 
+                                )
+                                print(f'>>>> found flyback {cf}px ')
+                                if abs(cf) >= 10:
+                                    calculated_flyback = cf
+                                    pos = poss
+                                    break
+                                if abs(cf) > abs(calculated_flyback):
+                                    calculated_flyback = cf
+                                    pos = poss
+                        print(f'>>>> final flyback is {calculated_flyback}px ')
+                        flybacks.append(flyback_arr(calculated_flyback, pos, img.shape[i]))
                     else:
                         flybacks.append(0)
                 img.flyback = tuple(flybacks)
-            return flybacks
+            return tuple(flybacks)
     
     @MemoizedProperty(np.ndarray).depends_on(flyback, img)
-    def motion_transforms(self) -> np.ndarray:
+    def motion_transforms(self):
         with TerminalHeader(' [Motion correction] '):
             import itk
             precision =  itk.F
@@ -200,10 +200,10 @@ class TExp(_ThorExp):
 
                     bar.set_description(f'{">>>> registration": <25}')
                     registrer.Update()
-                    shift[:] = registrer.GetTransform().GetParameters()
+                    shift[::-1] = registrer.GetTransform().GetParameters()  # order of element is faster axis first!!!!
                     reg_param[n] = optimizer.GetCurrentIteration(), optimizer.GetValue(), optimizer.GetStopCondition()
                     registrer.ResetPipeline()
-                    # registrer.SetMovingInitialTransform(registrer.GetTransform())
+                    #registrer.SetMovingInitialTransform(registrer.GetTransform())
                     
             # print(transforms[:5], '\n', reg_param[:5])
             np.save(os.path.join(self.path, 'reg_param'), reg_param)
@@ -244,13 +244,15 @@ class TExp(_ThorExp):
             print(f'>>>> {masks.max()} masks detected')
             return masks
 
-    @MemoizedProperty().depends_on(masks_cells)
+    @MemoizedProperty(np.ndarray).depends_on(masks_cells)
     def center_cells(self, ):
         with TerminalHeader(' [Position of center of cells] '):
             cell_pos = np.empty((self.masks_cells.max()-1, 3))
             with tqdmlog(np.arange(1, self.masks_cells.max()), desc='>>>> extracting cell shaps from masks', unit='ROIs') as bar:
                 for n in bar:
-                    cell_pos[n, :] = np.mean(np.where(self.masks_cells == n), axis=1)
+                    tmp = (self.masks_cells.reshape(-1) == n).nonzero()[0]
+                    cell_pos[n-1, :] = np.mean(np.unravel_index(tmp, self.masks_cells.shape), axis=1)
+                    # cell_pos[n-1, :] = np.mean((self.masks_cells == n).nonzero(), axis=1)
         return cell_pos
 
     @MemoizedProperty(np.ndarray).depends_on(masks_cells, img, motion_transforms, flyback)
@@ -258,19 +260,29 @@ class TExp(_ThorExp):
         with TerminalHeader(' [Fluorescence traces extraction] '):
             Fraw = np.empty((self.img.shape[0], self.masks_cells.max() - 1),)
             print(f'>>>> Making cells indexes from masks')
-            cells_idxs = numba.typed.List(np.where(self.masks_cells.reshape(-1) == i+1)[0] for i in range(Fraw.shape[-1]))
-            with tqdmlog(zip(self.img, np.round(self.motion_transforms).astype(np.intp), Fraw), desc='>>>> extracting traces', total=self.img.shape[0], unit='frames') as bar:
-                for frame, ttt, fraw in bar:
+            cells_idxs = numba.typed.List((self.masks_cells.reshape(-1) == i+1).nonzero()[0] for i in range(Fraw.shape[-1]))
+            with tqdmlog(zip(self.img, *np.modf(self.motion_transforms[:, 0]) ,np.round(self.motion_transforms[:, 1:]).astype(np.intp), Fraw), desc='>>>> extracting traces', total=self.img.shape[0], unit='frames') as bar:
+                for frame, fzt, zt, tt, fraw in bar:
                     extended_frame = np.empty_like(frame, dtype=np.float32)
                     extended_frame.fill(np.NaN)
-                    outslices, frameslices = self.motionslices(ttt)
-                    extended_frame[outslices] = frame[frameslices]
+                    zt = int(zt)
+                    if fzt < 0.1:
+                        outslices, frameslices = self.motionslices((zt, *tt))
+                        extended_frame[outslices] = frame[frameslices]
+                    elif fzt > 0.9:
+                        outslices, frameslices = self.motionslices((zt+1, *tt))
+                        extended_frame[outslices] = frame[frameslices]
+                    else:
+                        outslices, frameslices  = self.motionslices((zt, *tt))
+                        extended_frame[outslices] = frame[frameslices] * (1. - fzt)
+                        outslices, frameslices  = self.motionslices((zt + 1, *tt))
+                        extended_frame[outslices] += frame[frameslices] *  fzt
                     self.extract_traces(extended_frame.reshape(-1), cells_idxs, fraw)
             number_pix = tuple(idxs.size for idxs in cells_idxs)
             Fraw /= np.tile(number_pix, (self.img.shape[0], 1))
         return Fraw.T
 
-    @MemoizedProperty().depends_on(Fraw_cells)
+    @MemoizedProperty(to_file=False).depends_on(Fraw_cells)
     def Fzscore_cells(self):
         return stats.zscore(self.Fraw_cells, axis=1, ddof=0, nan_policy='omit')
 
@@ -279,7 +291,7 @@ class TExp(_ThorExp):
         fun = {
             "cos": np.cos,
         }[args[0]]
-        ptp_ratio = float(args[-1])
+        ptp_ratio = args[1]
         return lambda A, pos, size: A * (fun(np.linspace(-(tmp:=np.arccos(ptp_ratio)), tmp, size)) + (pos)*(1-ptp_ratio))
     
     @staticmethod
