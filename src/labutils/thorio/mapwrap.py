@@ -7,7 +7,7 @@ class rawTseries(np.memmap):
         if len(shape) < 3:
             raise TypeError("Intended for 2D or 3D timeseries. First axis is always indicating a series of image sor volumes")
 
-        if clips is None:
+        if clips is None or clips is False:
             clips = Ellipsis
         elif isinstance(clips, (tuple, list, np.ndarray)):
             clips = tuple(slice(*c) if c else slice(0,s) for c, s in zip(clips, shape))
