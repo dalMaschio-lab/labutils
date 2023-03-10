@@ -1,73 +1,159 @@
+from __future__ import annotations
+from typing import TYPE_CHECKING, Protocol, Union
+from labutils.thorio.mapwrap import rawTseries
+if TYPE_CHECKING:
+    from _typeshed import Incomplete
+else:
+    from typing import Any as Incomplete
 from .Zstack import ZExp
-from ..utils import _norm_u16stack2float
+from .thorio_common import _Image
+from ..filecache import MemoizedProperty
+from ..utils import _norm_u16stack2float, TerminalHeader, tqdmlog
 from ..zbatlas import MPIN_Atlas
-import sys, os, tempfile, nrrd, numpy as np, subprocess #, zlib
+import sys, os, tempfile, numpy as np, subprocess #, zlib
 from skimage import feature
 from scipy import io
+from itk import (
+    ITKMetricsv4 as Metrics,
+    ITKRegistrationMethodsv4 as RegistrationMethods,
+    ITKOptimizersv4 as Optimizers,
+    ITKTransform as Transforms,
+    ITKDisplacementField as DisplacementFields
+)
+import itk
 # from functools import reduce
 
-class AffineMat(object):
-    def __init__(self):
-        self._fixed = np.zeros((3,1))
-        self._AffineTransform_float_3_3 = np.concatenate((np.diag((1.,1.,1.)), np.zeros((1,3)))).reshape((12,1))
+"-c", "[200x200x100x80,1e-6,10]", "--shrink-factors", "12x8x4x2", "--smoothing-sigmas", "4x3x2x1vox"
+class AlignableMixIn:
+    _base_md = {
+        'alignTo': Incomplete,
+        'AlignStages': {
+            'Global': {
+                'transform': '',
+                'metric': [
+                    '',
+                    {
+                        '': None,
+                    }
+                ],
+                'levels': [(200, 12, 4), (200, 8, 3), (100, 4, 2), (80, 2, 2)],
+                'learnRate': .15,
+                'updateFieldVar': 0,
+                'totalFieldVar': 0
+                }
+        },
+    }
+    precision = itk.D
+    alignTo = Incomplete
 
-    @property
-    def translation(self):
-        return self._AffineTransform_float_3_3.reshape((4,-1))[-1, :]
-    @translation.setter
-    def translation(self, v):
-        self._AffineTransform_float_3_3.reshape((4,-1))[-1, :] = v
-
-    @property
-    def matrix(self):
-        return self._AffineTransform_float_3_3.reshape((4,-1))[:-1, :]
-    @matrix.setter
-    def matrix(self, m):
-        self._AffineTransform_float_3_3.reshape((4,-1))[:-1, :] = m
-
-    @property
-    def center(self):
-        return self._fixed.reshape(-1)[:]
-    @center.setter
-    def center(self, v):
-        self._fixed.reshape(-1)[:] = v
-
-    @property
-    def offset(self):
-        return self.translation + self.center - self.matrix @ self.center
-    @offset.setter
-    def offset(self, o, change='translation'):
-        if change == 'translation':
-            self.translation = o - self.center + self.matrix @ self.center
-        else:
-            raise NotImplementedError()
+    def __init__(self: _Image, *args, alignTo: _Image=Incomplete, **kwargs) -> None:
+        self._base_md['alignTo'] = alignTo.path
+        super().__init__(*args, **kwargs)
+        self.alignTo = alignTo
+        setattr(self, 'alignTo', alignTo)
 
     @staticmethod
-    def load_from(fn):
-        tmp = io.matlab.loadmat(fn)
-        tmpself = AffineMat()
-        tmpself._fixed = tmp['fixed']
-        tmpself._AffineTransform_float_3_3 = tmp['AffineTransform_float_3_3']
-        return tmpself
+    def _getitkImage(image, spacing=None, center=None, precision=precision):
+        itkimage = itk.GetImageFromArray(image.astype(precision))
+        if spacing is not None:
+            itkimage.SetSpacing(spacing[::-1])
+        if center is not None:
+            itkimage.SetOrigin(center[::-1])
+        return itkimage
 
-    def save(self, fn):
-        out = dict(
-            AffineTransform_float_3_3=self._AffineTransform_float_3_3.astype(np.float32),
-            fixed=self._fixed.astype(np.float32),
+    @MemoizedProperty(Transforms.CompositeTransform).depends_on(meanImg)
+    def alignto_transforms(self, px2units, alignTo, AlignStages):
+        with TerminalHeader(' [Registration] '):
+            # TODO check centers
+            reference = self._getitkImage(self.alignTo.meanImg, self.alignTo.md['px2units'])
+            moving = self._getitkImage(self.meanImg, px2units)
+            composite_transform = Transforms.CompositeTransform[self.precision, reference.ndim].New(
+                OnlyMostRecentTransformToOptimizeOn=True
             )
-        io.matlab.savemat(fn, out, format='4')
 
-    def scale(self, sv):
-        mat = self.matrix.copy()
-        offset = self.offset.copy()
-        chainmat = np.diag(sv)
-        self.matrix = chainmat @ mat
-        self.offset = chainmat @ offset
-        return self
+            for stage, params in AlignStages.items():
+                iterations, shrink_f, smoothing_s, = zip(*params['levels'])
+                reg_params = dict(
+                    NumberOfLevels=len(iterations),
+                    NumberOfIterationsPerLevel=iterations,
+                    SmoothingSigmasPerLevel=smoothing_s,
+                    ShrinkFactorsPerLevel=shrink_f,
+                    LearningRate=params['learnRate']
+                )
 
+                transform = getattr(Transforms, params['transform'] + 'Transform', None) or getattr(DisplacementFields, params['transform'] + 'Transform', None)
+                if transform is None:
+                    raise TypeError('Unknown Transform type')
+                transform = transform[self.precision, reference.ndim].New()
+                composite_transform.AddTransform(transform)
+
+                metric, m_parms = params['metric']
+                metric = getattr(Metrics, metric + 'ImageToImageMetricv4', )
+                reg_params['MetricSamplingStrategy'] = getattr(RegistrationMethods.ImageRegistrationMethodv4Enums, 'MetricSamplingStrategy_' + m_parms.pop('MetricSamplingStrategy').upper())
+                reg_params['MetricSamplingPercentage'] = m_parms.pop('MetricSamplingPercentage')
+                # TODO add interpolators, add masks
+                metric = metric[reference, moving].New(**m_parms)
+
+                # TODO: scale estimator
+
+                optimizer = Optimizers.RegularStepGradientDescentOptimizerv4.New(
+                    ConvergenceWindowSize=['convergenceWin'],
+                    MinimumConvergenceValue=params['convergenceValue'],
+                )
+
+                if stage == 'Global':
+                    registrer = RegistrationMethods.ImageRegistrationMethodv4[reference, moving]
+                elif stage == 'Syn':
+                    registrer = RegistrationMethods.SyNImageRegistrationMethod[reference, moving]
+                    reg_params['GaussianSmoothingVarianceForTheUpdateField'] = params['updateFieldVar']
+                    reg_params['GaussianSmoothingVarianceForTheTotalField'] = params['totalFieldVar']
+                else:
+                    raise TypeError('Unknown stage registrer')
+                
+                #TODO check if right transform
+                registrer = registrer.New(
+                    Optimizer=optimizer,
+                    Metric=metric,
+                    MovingImage=moving,
+                    FixedImage=reference,
+                    FixedInitialTransform=itk.IdentityTransform[itk.D, reference.ndim].New(),
+                    InitialTransform=composite_transform,
+                    **reg_params
+                )
+
+                with tqdmlog(unit='its', total=sum(iterations)) as bar:
+                    desc = f">>>>Registration, l{{}}/{len(iterations)}: convergence {{:.2e}} (min: {params['convergenceValue']:.2e})"
+                    def update_fun():
+                        bar.set_description(
+                            desc.format(
+                                registrer.GetCurrentLevel(), registrer.GetCurrentConvergenceValue()
+                            ),
+                            refresh=False
+                        )
+                        bar.update(registrer.GetCurrentIteration() - bar.n)
+                    update_fun()
+                    registrer.AddObserver(itk.IterationEvent(), update_fun)
+                    registrer.Update()
+
+        return composite_transform
+
+    def transform_points(self, points):
+        # TODO check if points need to be reversed
+        return np.stack([self.alignto_transforms.TransformPoint(p) for p in points])
+
+    def transform_image(self, image, spacing=None, center=None):
+        if type(image) is np.ndarray:
+            image = self._getitkImage(image, spacing=spacing, center=center)
+        resampler = itk.ResampleImageFilter[image, self.reference].New(
+            Input=image,
+            Transform=self.alignto_transforms,
+            UseReferenceImage=True,
+            ReferenceImage=self._getitkImage(self.alignTo.meanImg, self.alignTo.md['px2units']),
+        )
+        return resampler.GetOutput()
 
 class AlignableRigidPlaneData:
-    def __init__(self, *args, alignTo: (None, ZExp)=None, **kwargs):
+    def __init__(self, *args, alignTo: None | ZExp=None, **kwargs):
         self.alignTo = alignTo
         self.shifts = None
         super().__init__(*args, **kwargs)
@@ -139,7 +225,7 @@ class AlignableRigidPlaneData:
 # pnt: l->z:    z2lW    z2lA
 class AlignableVolumeData:
     antsbin='/opt/ANTs/bin'
-    def __init__(self, *args, alignTo: (None, MPIN_Atlas)=None, **kwargs):
+    def __init__(self, *args, alignTo: None, **kwargs):
         self.alignTo = alignTo
         super().__init__(*args, **kwargs)
 
