@@ -32,13 +32,18 @@ class _Image(Protocol):
 
 
 class _ThorExp(_Image):
-    _base_md = Incomplete
+    _base_md = {
+        'time': Incomplete,
+        'shape': Incomplete,
+        'px2units': Incomplete,
+    }
     md_xml = 'Experiment.xml'
     def __init__(self, path, parent: "_Model | None", **kwargs):
         self.path = path
         self.parent = parent
-        self._pre_md = {**self._base_md}
-        self._pre_md.update({k: kwargs[k] for k in kwargs if k in self._base_md})
+        self._pre_md = {}
+        tuple(self._pre_md.update(parentclass._base_md) for parentclass in self.__class__.mro()[::-1])
+        self._pre_md.update({k: kwargs[k] for k in kwargs if k in self._pre_md})
         self._pre_md.update(**self.md._data_d)
         [
             setattr(self.md, k, i)

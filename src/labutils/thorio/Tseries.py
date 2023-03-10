@@ -14,11 +14,8 @@ import numba
 class TExp(_ThorExp):
     data_raw = 'Image_001_001.raw'
     _base_md = {
-        'time': Incomplete,
-        'shape': Incomplete,
-        'px2units': Incomplete,
-        'zx2um': 1,
         'units': ('s', 'm', 'm', 'm'),
+        'zx2um': 1,
         'nplanes': 1,
         'totframes': Incomplete,
         'clip': False,
@@ -141,8 +138,7 @@ class TExp(_ThorExp):
                 FixedTransform=id_transform,
                 FixedInterpolator=FixedInterp,
                 MovingInterpolator=MovingInterp
-            ) #itk.MattesMutualInformationImageToImageMetricv4[reference, moving_base].New()
-            # metric.SetNumberOfHistogramBins(16)
+            )
 
             print(">>>> making scale estimator...")
             shiftScaleEstimator = itk.RegistrationParameterScalesFromPhysicalShift[metric].New()
@@ -170,19 +166,18 @@ class TExp(_ThorExp):
             registrer = itk.ImageRegistrationMethodv4[reference, moving_base].New(
                 FixedImage=reference,
                 FixedInitialTransform=id_transform,
-                # Metric=metric,
                 Optimizer=optimizer,
+                NumberOfLevels=1,
+                ShrinkFactorsPerLevel=(6,),
+                SmoothingSigmasPerLevel=(2,),
+                MetricSamplingStrategy=itk.ImageRegistrationMethodv4Enums.MetricSamplingStrategy_RANDOM,
+                MetricSamplingPercentage=.6,
             )
-            registrer.SetNumberOfLevels(1)
-            registrer.SetShrinkFactorsPerLevel((6,))
-            registrer.SetSmoothingSigmasPerLevel((2,))
-            registrer.SetMetricSamplingStrategy(itk.ImageRegistrationMethodv4Enums.MetricSamplingStrategy_RANDOM)
-            registrer.SetMetricSamplingPercentage(0.6)
-            movingInitialTransform = transform_base.New()
-            initialParameters = movingInitialTransform.GetParameters()
-            initialParameters.Fill(0.)
-            movingInitialTransform.SetParameters(initialParameters)
-            registrer.SetMovingInitialTransform(movingInitialTransform)
+            # movingInitialTransform = transform_base.New()
+            # initialParameters = movingInitialTransform.GetParameters()
+            # initialParameters.Fill(0.)
+            # movingInitialTransform.SetParameters(initialParameters)
+            # registrer.SetMovingInitialTransform(movingInitialTransform)
 
             with tqdmlog(np.arange(self.img.shape[0]), unit='frames',) as bar:
                 for n in bar:
@@ -194,8 +189,7 @@ class TExp(_ThorExp):
                     registrer.SetMetric(metric)
                     shiftScaleEstimator.SetMetric(metric)
 
-                    transform = transform_base.New()
-                    registrer.SetInitialTransform(transform)
+                    registrer.SetInitialTransform(transform_base.New())
                     registrer.SetMovingImage(frametk)
 
                     bar.set_description(f'{">>>> registration": <25}')
@@ -203,9 +197,7 @@ class TExp(_ThorExp):
                     shift[::-1] = registrer.GetTransform().GetParameters()  # order of element is faster axis first!!!!
                     reg_param[n] = optimizer.GetCurrentIteration(), optimizer.GetValue(), optimizer.GetStopCondition()
                     registrer.ResetPipeline()
-                    #registrer.SetMovingInitialTransform(registrer.GetTransform())
-                    
-            # print(transforms[:5], '\n', reg_param[:5])
+
             np.save(os.path.join(self.path, 'reg_param'), reg_param)
             return transforms
 

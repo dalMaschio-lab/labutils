@@ -12,9 +12,6 @@ import os, tifffile
 class ZExp(_ThorExp):
     img_tiff = "ChanC_001_001_{:>03d}_001.tif"
     _base_md = {
-        'time': Incomplete,
-        'shape': Incomplete,
-        'px2units': Incomplete,
         'units': ('m', 'm', 'm'),
         'flipax': (False, False, False),
     }
