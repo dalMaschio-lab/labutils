@@ -98,7 +98,7 @@ def detect_bidi_offset_(image, offsets=np.arange(-25,25)):
     # find for each line the lowest score, then count how many occurences there are for any offset and get the most represented
     return offsets[np.bincount((offsetscores.argmin(axis=0))).argmax()]
 
-def load_s2p_data(s2pdir, nplanes, doneuropil=False):
+def load_s2p_data(s2pdir, nplanes, doneuropil=False, doiscell=False):
     cells = []
     neuropils = []
     pos = []
@@ -108,7 +108,12 @@ def load_s2p_data(s2pdir, nplanes, doneuropil=False):
         op = np.load(os.path.join(s2pdir, f"plane{p}", "ops.npy"), allow_pickle=True).tolist()
         cell = np.load(os.path.join(s2pdir, f"plane{p}", "F.npy"), allow_pickle=True)
         neuropil = np.load(os.path.join(s2pdir, f"plane{p}", "Fneu.npy"), allow_pickle=True)
+        iscell = (np.load(os.path.join(s2pdir, f"plane{p}", "iscell.npy"), allow_pickle=True)[:,0]).astype(bool)
         stat = np.load(os.path.join(s2pdir, f"plane{p}", "stat.npy"), allow_pickle=True)
+        if doiscell:
+            cell = cell[iscell]
+            stat = stat[iscell]
+            neuropil = neuropil[iscell]
         if len(cell):
             cells.append(cell)
             neuropils.append(neuropil)

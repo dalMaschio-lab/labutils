@@ -25,6 +25,7 @@ class OdorEvokedTExp(TExp):
     def __init__(self, path, parent, stimulus_npy_file, pre_stims=False, stim_len_window=None, baseline_window=(120,120),**kwargs):
         self.stim_file = stimulus_npy_file
         self.doneuropil=False
+        self.doiscell = True
         #self.stim_len_window = stim_len_window
         self.baseline_window = baseline_window
         kwargs.setdefault('cachefn', []).append((('params', ), self._peel_traces))

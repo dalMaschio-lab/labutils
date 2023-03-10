@@ -7,6 +7,7 @@ import os, copy, time
 
 class TExp(_ThorExp):
     doneuropil=False
+    doiscell=False
     ops = {
         'fast_disk': os.path.expanduser("~/.suite2p/"),
         'batch_size': 200,
@@ -63,7 +64,7 @@ class TExp(_ThorExp):
 
     def _load_s2p_data(self):
         try:
-            cells, pos, ops = load_s2p_data(os.path.join(self.path, self.ops['save_folder']), self.md['shape'][1], doneuropil=self.doneuropil)
+            cells, pos, ops = load_s2p_data(os.path.join(self.path, self.ops['save_folder']), self.md['shape'][1], doneuropil=self.doneuropil, doiscell=self.doiscell)
         except FileNotFoundError as e:
             print(f"tseries {self.path} is missing segmentetion, run s2p")
             ops = self._run_s2p()[0]
