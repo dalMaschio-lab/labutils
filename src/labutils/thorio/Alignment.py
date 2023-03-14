@@ -12,13 +12,15 @@ from ..utils import _norm_u16stack2float, TerminalHeader, tqdmlog
 from ..zbatlas import MPIN_Atlas
 import sys, os, tempfile, numpy as np, subprocess #, zlib
 from skimage import feature
-from scipy import io
+from scipy import ndimage
 from itk import (
     ITKMetricsv4 as Metrics,
     ITKRegistrationMethodsv4 as RegistrationMethods,
     ITKOptimizersv4 as Optimizers,
     ITKTransform as Transforms,
-    ITKDisplacementField as DisplacementFields
+    ITKDisplacementField as DisplacementFields,
+    ITKImageFunction as ImageFun,
+    ITKSpatialObjects as SpatialObj
 )
 import itk
 # from functools import reduce
@@ -61,17 +63,38 @@ class AlignableMixIn:
             itkimage.SetOrigin(center[::-1])
         return itkimage
 
-    @MemoizedProperty(Transforms.CompositeTransform).depends_on(meanImg)
+    @staticmethod
+    def _getitkMask(image, black_lvl=60):
+        bin_img = itk.GetArrayViewFromImage(image)
+        bin_img = itk.GetImageFromArray(
+            ndimage.binary_dilation(
+                (bin_img > np.percentile(bin_img, black_lvl)),
+                np.ones((3,3,3)),
+                3
+            ).astype(np.uint8)
+        )
+        bin_img.CopyInformation(image)
+        mask = SpatialObj.ImageMaskSpatialObject[image.ndim].New(Image=bin_img)
+        mask.Update()
+        return mask
+
+    @MemoizedProperty(Transforms.CompositeTransform.D3, skip_args=True)#.depends_on(meanImg)
     def alignto_transforms(self, px2units, alignTo, AlignStages):
         with TerminalHeader(' [Registration] '):
             # TODO check centers
+            print(">>>> making images...")
             reference = self._getitkImage(self.alignTo.meanImg, self.alignTo.md['px2units'])
             moving = self._getitkImage(self.meanImg, px2units)
+            
+            reference_mask = self._getitkMask(reference)
+            moving_mask = self._getitkMask(moving)
+
             composite_transform = Transforms.CompositeTransform[self.precision, reference.ndim].New(
                 OnlyMostRecentTransformToOptimizeOn=True
             )
 
             for stage, params in AlignStages.items():
+                print(f">>>> Stage {stage} with {params['transform']}...")
                 iterations, shrink_f, smoothing_s, = zip(*params['levels'])
                 reg_params = dict(
                     NumberOfLevels=len(iterations),
@@ -81,6 +104,7 @@ class AlignableMixIn:
                     LearningRate=params['learnRate']
                 )
 
+                print(">>>> making transform...")
                 transform = getattr(Transforms, params['transform'] + 'Transform', None) or getattr(DisplacementFields, params['transform'] + 'Transform', None)
                 if transform is None:
                     raise TypeError('Unknown Transform type')
@@ -88,19 +112,31 @@ class AlignableMixIn:
                 composite_transform.AddTransform(transform)
 
                 metric, m_parms = params['metric']
+                print(">>>> making metric...")
                 metric = getattr(Metrics, metric + 'ImageToImageMetricv4', )
                 reg_params['MetricSamplingStrategy'] = getattr(RegistrationMethods.ImageRegistrationMethodv4Enums, 'MetricSamplingStrategy_' + m_parms.pop('MetricSamplingStrategy').upper())
                 reg_params['MetricSamplingPercentage'] = m_parms.pop('MetricSamplingPercentage')
-                # TODO add interpolators, add masks
-                metric = metric[reference, moving].New(**m_parms)
+                interpolator_type = getattr(ImageFun, params['Interpolator'] + 'InterpolateImageFunction')
+                metric = metric[reference, moving].New(
+                    FixedTransform=itk.IdentityTransform[self.precision,reference.ndim].New(),
+                    FixedInterpolator=interpolator_type[reference, self.precision],
+                    MovingInterpolator=interpolator_type[moving, self.precision],
+                    MovingImageMask=moving_mask,
+                    FixedImageMask=reference_mask,
+                    **m_parms
+                )
 
-                # TODO: scale estimator
+                print(">>>> making scale optimizer...")
+                shiftScaleEstimator = itk.RegistrationParameterScalesFromPhysicalShift[metric].New()
+                shiftScaleEstimator.SetMetric(metric)
 
                 optimizer = Optimizers.RegularStepGradientDescentOptimizerv4.New(
                     ConvergenceWindowSize=['convergenceWin'],
                     MinimumConvergenceValue=params['convergenceValue'],
+                    ScalesEstimator=shiftScaleEstimator,
                 )
 
+                print(">>>> making registrar...")
                 if stage == 'Global':
                     registrer = RegistrationMethods.ImageRegistrationMethodv4[reference, moving]
                 elif stage == 'Syn':
