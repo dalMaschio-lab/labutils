@@ -16,9 +16,9 @@ class ZExp(_ThorExp):
         'flipax': (False, False, False),
     }
     def __init__(self, path, parent, **kwargs):
-        super().__init__(path, parent)
+        super().__init__(path, parent, **kwargs)
         print(f"loading Z image data at {path}...")
-        self._base_md.update({k: kwargs[k] for k in kwargs if k in ZExp._base_md})
+        #self._base_md.update({k: kwargs[k] for k in kwargs if k in ZExp._base_md})
 
     @MemoizedProperty(np.ndarray)
     def img(self, shape, flipax):
@@ -28,6 +28,10 @@ class ZExp(_ThorExp):
         # outtype = np.uint8 if (ptp := np.ptp(img)) < np.iinfo(np.uint8).max else np.uint16
         # img = (np.iinfo(outtype).max/ptp * (img - img.min())).astype(outtype)
         return img
+
+    @property
+    def meanImg(self):
+        return self.img
 
     @MemoizedProperty(dict)
     def md(self) -> dict:
@@ -51,7 +55,7 @@ class ZExp(_ThorExp):
         return {
             **self._pre_md,
             'shape': (steps, *size),
-            'px2units': (1e-3*z2um, 1e-3*px2um, 1e-3*px2um, ),
+            'px2units': (1e-6*z2um, 1e-6*px2um, 1e-6*px2um, ),
             'time': utime,
         }
 
