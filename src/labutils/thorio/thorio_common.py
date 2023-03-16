@@ -42,18 +42,19 @@ class _ThorExp(_Image):
         self.path = path
         self.parent = parent
         self._pre_md = {}
-        tuple(self._pre_md.update(parentclass._base_md) for parentclass in self.__class__.mro()[::-1])
+        tuple(self._pre_md.update(getattr(parentclass, '_base_md', {})) for parentclass in self.__class__.mro()[::-1])
         self._pre_md.update({k: kwargs[k] for k in kwargs if k in self._pre_md})
         self._pre_md.update(**self.md._data_d)
         [
             setattr(self.md, k, i)
-            for k, i in self.__class__.__dict__['md'].function(self).items()
+            for k, i in self.__class__.md.function(self).items()
             if not k in self.md._data_d
         ] # if it was loaded an incomplete md file update it
         self.md.flush()
 
     def override(self, **kwargs):
         tuple(setattr(self.md, k, kwargs[k]) for k in kwargs if k in self._base_md)
+        self.md.flush()
         return self
 
     def meanImg(self, *args) -> FMappedArray:

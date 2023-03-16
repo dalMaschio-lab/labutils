@@ -9,6 +9,13 @@ from collections.abc import Callable
 from typing import Any
 import numpy as np
 from numpy._typing import ArrayLike
+from itk import (
+    ITKIOTransformBase as TransformIO,
+    ITKTransform as Transforms,
+    ITKDisplacementField as DisplacementFields,
+    ITKIOImageBase as ImageIO
+)
+import itk
 
 class _FMappedBase(Protocol):
     @classmethod
@@ -38,6 +45,35 @@ class FMappedArray(np.memmap, _FMappedBase):
     @classmethod
     def fromfile(cls, path) -> FMappedArray:
         return np.load(path + '.npy', mmap_mode='r+').view(cls)
+
+
+class FMappedTransform(np.memmap, _FMappedBase):
+    def __new__(cls, transform, path):
+        # save
+        # load
+        return NotImplemented
+
+    def flush():
+        raise NotImplementedError
+
+    @classmethod
+    def fromfile(cls, path):
+        try:
+            # load
+            return NotImplemented
+        except:
+            # TODO filename
+            aff = TransformIO.TransformFileReaderTemplate.D.New(FileName=path + '_0GenericAffine.mat').GetTransformList()[0]
+            # TODO rotate axis
+            aff = Transforms.AffineTransform.D3.cast(aff)
+            img =  ImageIO.ImageFileReader(FileName=path + '_1Warp.nii.gz')
+            imgD = itk.GetImageFromArray(itk.GetArrayFromImage(img).astype(np.float64), is_vector=True)
+            imgD.CopyInformation(img)
+            df = DisplacementFields.DisplacementFieldTransform.D3.New(DisplacementField=imgD)
+            composite = Transforms.CompositeTransform.D3.New()
+            composite.AddTransform(aff)
+            composite.AddTransform(df)
+            return composite
 
 
 class FMappedMetadata(_FMappedBase):
@@ -103,14 +139,15 @@ class FMappedMetadata(_FMappedBase):
 
 
 class MemoizedProperty:
-    __slots__ = 'name', 'function', 'memobj', 'f_args_names', 'd_args_names'
+    __slots__ = 'name', 'function', 'memobj', 'f_args_names', 'd_args_names', 'skip_args'
     # builder
-    def __init__(self, return_type: type=Incomplete, to_file=True, ):
+    def __init__(self, return_type: type=Incomplete, to_file=True, skip_args=False):
         self.function: Callable = Incomplete
         self.name: str = Incomplete
         self.memobj = self._return2memobj(return_type if to_file else inspect._empty)
         self.f_args_names: set[str] = set()
         self.d_args_names: set[str] = set()
+        self.skip_args = skip_args
 
     @staticmethod
     def _return2memobj(return_type: type):
@@ -143,6 +180,10 @@ class MemoizedProperty:
 
     def __get__(self, instance, owner):
         if self.name and self.function:
+            if instance is None: # class access
+                outval = {}
+                tuple(outval.update(ownpar.__dict__) for ownpar in owner.mro()[::-1])
+                return outval[self.name[1:]]
             try:
                 return instance.__dict__[self.name]
             except KeyError:
@@ -151,14 +192,14 @@ class MemoizedProperty:
             try:
                 tmp = self.memobj.fromfile(os.path.join(cachepath, self.name))
                 if instance_args:
-                    # try:
-                    with open(os.path.join(cachepath, self.name + '_args.json')) as fd:
-                        saved_args = {k: tuple(i) if type(i) is list else i for k, i in json.load(fd).items()}
-                    # except FileNotFoundError:
-                    #     with open(os.path.join(cachepath, self.name + '_args.json'), 'w') as fd:
-                    #         json.dump(instance_args, fd)
-                    #    saved_args = instance_args
-                    assert(saved_args == instance_args)
+                    if not self.skip_args:
+                        with open(os.path.join(cachepath, self.name + '_args.json')) as fd:
+                            saved_args = {k: tuple(i) if type(i) is list else i for k, i in json.load(fd).items()}
+                        assert(saved_args == instance_args)
+                    else:
+                        with open(os.path.join(cachepath, self.name + '_args.json'), 'w') as fd:
+                            json.dump(instance_args, fd)
+                        saved_args = instance_args
             except Exception:
                 tmp = self.memobj(self.function(instance, **{k: instance_args[k] for k in self.f_args_names}), os.path.join(cachepath, self.name))
                 if self.memobj is not FMappedObj:
