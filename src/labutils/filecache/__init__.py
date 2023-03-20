@@ -47,33 +47,39 @@ class FMappedArray(np.memmap, _FMappedBase):
         return np.load(path + '.npy', mmap_mode='r+').view(cls)
 
 
-class FMappedTransform(np.memmap, _FMappedBase):
+class FMappedTransform(Transforms.CompositeTransform.D3, _FMappedBase):
     def __new__(cls, transform, path):
-        # save
-        # load
-        return NotImplemented
+        transform.__class__ = cls
+        # transform.path = path
+        return transform
+    def __init__(self, transform, path) -> None:
+        self.path = path
 
-    def flush():
-        raise NotImplementedError
+    def flush(self):
+        writer = TransformIO.TransformFileWriterTemplate.F.New(FileName=self.path + '_Composite.h5', Input=self)
+        writer.Update()
 
     @classmethod
     def fromfile(cls, path):
         try:
-            # load
-            return NotImplemented
+            if os.path.exists(path + '_Composite.h5'): # avoid spam from itk vomiting a lot on stderr before raising the exception
+                composite = TransformIO.TransformFileReaderTemplate.D.New(FileName=path + '_Composite.h5')
+            else:
+                raise FileExistsError()
+            composite.Update()
+            return cls(Transforms.CompositeTransform.D3.cast(composite.GetTransformList()[0]), path)
         except:
-            # TODO filename
-            aff = TransformIO.TransformFileReaderTemplate.D.New(FileName=path + '_0GenericAffine.mat').GetTransformList()[0]
+            aff = TransformIO.TransformFileReaderTemplate.D.New(FileName=path + '_0GenericAffine.mat')
             # TODO rotate axis
-            aff = Transforms.AffineTransform.D3.cast(aff)
-            img =  ImageIO.ImageFileReader(FileName=path + '_1Warp.nii.gz')
-            imgD = itk.GetImageFromArray(itk.GetArrayFromImage(img).astype(np.float64), is_vector=True)
-            imgD.CopyInformation(img)
-            df = DisplacementFields.DisplacementFieldTransform.D3.New(DisplacementField=imgD)
+            aff.Update()
+            aff = Transforms.AffineTransform.D3.cast(aff.GetTransformList()[0])
+            img =  ImageIO.ImageFileReader.D3.New(FileName=path + '_1Warp.nii.gz')
+            img.Update()
+            df = DisplacementFields.DisplacementFieldTransform.D3.New(DisplacementField=img)
             composite = Transforms.CompositeTransform.D3.New()
             composite.AddTransform(aff)
             composite.AddTransform(df)
-            return composite
+            return cls(composite, path)
 
 
 class FMappedMetadata(_FMappedBase):
@@ -155,6 +161,8 @@ class MemoizedProperty:
             return FMappedArray
         elif issubclass(return_type, dict):
             return FMappedMetadata
+        elif issubclass(return_type, Transforms.CompositeTransform.D3):
+            return FMappedTransform
         elif return_type is Incomplete: # defer
             return Incomplete
         else:

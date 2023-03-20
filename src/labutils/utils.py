@@ -168,6 +168,7 @@ class TerminalHeader(object):
 
 class tqdmlog(tqdm):
     def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
+        self.close()
         info = self.format_dict
         print(f'{self.desc} done in {self.format_interval(info["elapsed"])}s at {self.total/info["elapsed"]:.2f} {self.unit}/s')
         return super().__exit__(exc_type, exc_value, traceback)
