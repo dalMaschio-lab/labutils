@@ -103,6 +103,120 @@ class AlignableMixIn:
         napari.run()
 
 
+
+# img: z->l:    z2lW    z2lA
+# img: l->z:    z2lA-1  z2lW-1
+# pnt: z->l:    z2lA-1  z2lW-1
+# pnt: l->z:    z2lW    z2lA
+class AlignableMixInAnts(AlignableMixIn):
+    antsbin='/opt/ANTs/bin'
+    @MemoizedProperty(Transforms.CompositeTransform.D3)
+    def alignto_transforms(self, px2units, alignTo, AlignStages, ANTsInterpolation, ANTsHistMatch, ANTsWinInt, ANTsTemp):
+        with TerminalHeader(' [Registration] '):
+            print(">>>> Parsing parameters...")
+            alignpath = ANTsTemp if ANTsTemp is not None else self.path
+            
+            # out_fn = os.path.join(alignpath, 'transformed.nii')
+            reference_fn = os.path.join(alignpath, 'reference.nii')
+            moving_fn = os.path.join(alignpath, 'moving.nii')
+            outtr_prefx = os.path.abspath(os.path.join(alignpath, "_alignto_transforms_"))
+            ants_stages = [
+                'ANTsReg', "--dimensionality", str(self.meanImg.ndim), "--float", "1", "--verbose", "1", '-a', '1',
+                "-o", f"[{outtr_prefx}]",
+                "--interpolation", ANTsInterpolation,
+                "--winsorize-image-intensities", f"[{ANTsWinInt[0]:.3f},{ANTsWinInt[1]:.3f}]",
+                "--use-histogram-matching", str(1 if ANTsHistMatch else 0),
+                "-r", f"[{reference_fn},{moving_fn},1]",
+            ]
+            bar_helper = []
+            for stage, params in AlignStages.items():
+                iterations, shrink_f, smoothing_s, = zip(*params['levels'])
+                metric, m_parms = params['metric']
+                m_parms = m_parms.copy()
+                sampling_strat = m_parms.pop('MetricSamplingStrategy')
+                sampling_pctg =  m_parms.pop('MetricSamplingPercentage')
+                ants_stages.extend((
+                    '-t', f"{stage}[{params['learnRate']},{params['totalFieldVar']},{params['updateFieldVar']}]" if 'SyN' in stage else f"{stage}[{params['learnRate']}]",
+                    '-m', f'{metric}[{reference_fn},{moving_fn},1,' + (f'{tuple(m_parms.items())[0][1]},' if len(m_parms) else '0,') + (f'{sampling_strat},{sampling_pctg/100}' if sampling_strat != 'None' else '') + ']',
+                    '-c', f'[{"x".join(map(str,iterations))},{params["convergenceVal"]},{params["convergenceWin"]}]',
+                    '--shrink-factors', 'x'.join(map(str,shrink_f)),
+                    '--smoothing-sigmas', 'x'.join(map(str,smoothing_s))
+                ))
+                bar_helper.append((iterations, params["convergenceVal"]))
+            
+            print(">>>> Saving alignment images...")
+            reference, win_r = self._getitkImage(self.alignTo.meanImg, 1e6*np.array(self.alignTo.md['px2units']), ptp=(1.5, 99.99), window=(0.1, 120))
+            moving, _ = self._getitkImage(self.meanImg, 1e6*np.array(px2units[len(px2units) - self.meanImg.ndim:]),)# ptp=(0.1, 99.99))
+            ImageIO.ImageFileWriter(FileName=moving_fn, Input=moving)
+            ImageIO.ImageFileWriter(FileName=reference_fn, Input=reference)
+
+            print(">>>> Starting ANTs...")
+            p = subprocess.Popen(
+                executable=f"{self.antsbin}/antsRegistration", cwd=alignpath,
+                args=ants_stages,
+                bufsize=1, stdout=subprocess.PIPE, stderr=sys.stderr, encoding='utf-8', shell=False,
+            )
+
+            bar = None
+            antsdump = ''
+            stage_idx = -1
+            while (rcode:=p.poll()) is None:
+                line = p.stdout.readline()
+                if '*** Running' in line:
+                    stage_idx += 1
+                    stage = line.split(' ')[2].removesuffix('Transform')
+                    iterations, conv_val = bar_helper[stage_idx]
+                    level = 0
+                    if bar is not None:
+                        bar.__exit__(None, None, None)
+                    desc = f">>>> {stage} Registration, lvl:{{}}/{len(iterations)}: conv {{:.2e}} (min: {conv_val:.2e})"
+                    bar = tqdmlog(unit='its', total=sum(iterations), desc=desc.format(0, np.inf), leave=False).__enter__()
+                elif 'DIAGNOSTIC' in line and 'ITERATION' not in line:
+                    _, it, mV, cV, _, ts, _ = line.split(',')
+                    it, mV, cV, ts = int(it), float(mV), float(cV), float(ts)
+                    bar.set_description(desc.format(level, cV), refresh=False)
+                    bar.update(it - bar.n + sum(iterations[:level - 1]))
+                    if bar.n == bar.total:
+                        ts = .1
+                elif 'DIAGNOSTIC' in line and 'ITERATION' in line:
+                    level += 1
+                    ts = .001
+                    #bar.update((0, *iterations)[level - 1] - bar.n)
+                else:
+                    antsdump += line
+                    ts = .001
+                    #print(line, end='')
+                time.sleep(min(ts,5))
+
+            p.stdout.close()
+            if bar is not None:
+                bar.__exit__(None, None, None)
+            print(f">>>> ANTs exited with {rcode}...")
+            #p.wait()
+            os.unlink(moving_fn)
+            os.unlink(reference_fn)
+            # os.unlink(out_fn)
+            # shutil.move(outtr_prefx + 'Composite.h5', self.path)
+            
+            composite = TransformIO.TransformFileReaderTemplate.D.New(FileName=outtr_prefx + 'Composite.h5')
+            composite.Update()
+            composite = Transforms.CompositeTransform.D3.cast(composite.GetTransformList()[0])
+            os.unlink(outtr_prefx + 'Composite.h5')
+            os.unlink(outtr_prefx + 'InverseComposite.h5')
+        
+        return composite
+
+    def transform_points(self, points):
+        # TODO check if points need to be reversed
+        return super().transform_points(points*1e6) * 1e-6
+
+    def transform_image(self, image, spacing=None, center=None, mp=1e6, return_reference=False):
+        return super().transform_image(image, spacing, center, mp, return_reference)
+
+    def check_alignment(self, mp=1e6):
+        return super().check_alignment(mp)
+
+
 class AlignableMixInITK(AlignableMixIn):
     @MemoizedProperty(Transforms.CompositeTransform.D3, skip_args=True)#.depends_on(meanImg)
     def alignto_transforms(self, px2units, alignTo, AlignStages):
