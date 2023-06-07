@@ -10,19 +10,24 @@ import os, json
 import numpy as np
 
 class _Model:
-    md_json = "metadata.json"
-    def __init__(self, path, md={}):
+    _base_md = {}
+    def __init__(self, path, **kwargs):
         self.path = path
-        with open(os.path.join(path, self.md_json), 'a+') as fd:
-            fd.seek(0)
-            try:
-                self.md = json.load(fd)
-            except json.JSONDecodeError:
-                self.md = {}
-            fd.seek(0)
-            self.md.update(**md)
-            fd.truncate()
-            json.dump(self.md, fd, indent=4)
+        self._pre_md = {}
+        tuple(self._pre_md.update(getattr(parentclass, '_base_md', {})) for parentclass in self.__class__.mro()[::-1])
+        self._pre_md.update({k: kwargs[k] for k in kwargs if k in self._pre_md})
+        self._pre_md.update(**self.md._data_d)
+        [
+            setattr(self.md, k, i)
+            for k, i in self.__class__.md.function(self).items()
+            if not k in self.md._data_d
+        ] # if it was loaded an incomplete md file update it
+        self.md.flush()
+
+    def override(self, **kwargs):
+        tuple(setattr(self.md, k, kwargs[k]) for k in kwargs if k in self._base_md)
+        self.md.flush()
+        return self
 
 
 class _Image(Protocol):
@@ -53,7 +58,7 @@ class _ThorExp(_Image):
         self.md.flush()
 
     def override(self, **kwargs):
-        tuple(setattr(self.md, k, kwargs[k]) for k in kwargs if k in self._base_md)
+        tuple(setattr(self.md, k, kwargs[k]) for k in kwargs if k in self.md._data_d)
         self.md.flush()
         return self
 
