@@ -82,29 +82,15 @@ def times2convregress_(regressors: np.ndarray, fr: float, ca2_off: float=7.8, ca
     return np.stack([np.convolve(tev, transient, mode='same')/transient.sum() for tev in regressors], axis=0)
 
 def times2convregress(regressors: np.ndarray, fs: float, ca2_off: float=7.8, ca2_on: float=1.4, ca2_delay=5.6, baseoff=15):
-    transient = ca2p_transient(np.linspace(0., (ca2_on*2+ca2_off*2+ca2_delay)/fs), 1.0, ca2_delay, ca2_off, ca2_on)
+    transient = ca2p_transient(np.linspace(0., a:=(ca2_on+ca2_off*2+ca2_delay), int(a/fs)), 1.0, ca2_delay, ca2_off, ca2_on)
     return np.stack([np.convolve(tev, transient, mode='full') for tev in regressors], axis=0)[:, :regressors.shape[1]]
 
-def detect_bidi_offset(img, offsets=np.arange(-25,25),) -> float:
+def detect_bidi_offset(img, offsets=np.arange(-10,35),) -> float:
     even = img[::2]
     odd = img[1::2]
     # convolve even image with shifted versions of the odd image
     res = [(even*np.roll(odd, i,axis=-1)).mean() for i in offsets]
-    # if False:
-    #     offset = offsets[np.argmax(res)]
-    #     dist = np.percentile(img,(97.5, 98, 98.5, 99, 99.5),axis=0).mean(axis=0)#np.std(img,axis=0)
-    #     return offset, np.average(np.linspace(-1,1, img.shape[-1]), weights=dist-dist.min())
-    #     #return offset, np.linspace(-1,1, img.shape[-1])[np.argmax(np.convolve(dist, (tmp:=np.kaiser(5,5))/tmp.sum()))]
     return offsets[np.argmax(res)]
-
-#old version
-def detect_bidi_offset_(image, offsets=np.arange(-25,25)):
-    # created interpolated image of all even lines
-    avg_even = np.stack((image[:-2:2], image[2::2])).mean(axis=0)
-    # for each offset subtract rolled even from odd lines, and average over the line (offsetscores is [offsets*lines])
-    offsetscores = np.asarray([np.abs(np.sum((-np.roll(avg_even, -offset, axis=1), image[1:-1:2]), axis=0)).mean(axis=1) for offset in offsets])
-    # find for each line the lowest score, then count how many occurences there are for any offset and get the most represented
-    return offsets[np.bincount((offsetscores.argmin(axis=0))).argmax()]
 
 def load_s2p_data(s2pdir, nplanes, doneuropil=False):
     cells = []

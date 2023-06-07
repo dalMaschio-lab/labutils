@@ -51,7 +51,7 @@ class ZExp(_ThorExp):
                 px2um = float(child.get("pixelSizeUM", 1))
             elif child.tag == "ZStage":
                 steps = int(child.get("steps", 0))
-                z2um = -float(child.get("stepSizeUM", 1))
+                z2um = abs(float(child.get("stepSizeUM", 1)))
         return {
             **self._pre_md,
             'shape': (steps, *size),

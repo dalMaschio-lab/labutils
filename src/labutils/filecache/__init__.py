@@ -1,5 +1,6 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol
+
 if TYPE_CHECKING:
     from _typeshed import Incomplete
 else:
@@ -23,6 +24,7 @@ class _FMappedBase(Protocol):
     def flush(self) -> None: ...
 
 class FMappedObj(_FMappedBase):
+    ext = ''
     def __new__(cls, obj: Any, path) -> Any:
         return obj
 
@@ -38,53 +40,79 @@ class FMappedObj(_FMappedBase):
 
 
 class FMappedArray(np.memmap, _FMappedBase):
+    ext = '.npy'
     def __new__(cls, arr, path) -> FMappedArray:
-        np.save(path + '.npy', arr)
-        return np.load(path + '.npy', mmap_mode='r+').view(cls)
+        np.save(path + cls.ext, arr)
+        return np.load(path + cls.ext, mmap_mode='r+').view(cls)
 
     @classmethod
     def fromfile(cls, path) -> FMappedArray:
-        return np.load(path + '.npy', mmap_mode='r+').view(cls)
+        return np.load(path + cls.ext, mmap_mode='r+').view(cls)
 
 
-class FMappedTransform(Transforms.CompositeTransform.D3, _FMappedBase):
-    def __new__(cls, transform, path):
-        transform.__class__ = cls
-        # transform.path = path
-        return transform
+class FMappedTransform(_FMappedBase): 
+    ext = '_Composite.h5'
     def __init__(self, transform, path) -> None:
+        self._transforms = transform
+        self._readers = (None, None)
         self.path = path
 
     def flush(self):
-        writer = TransformIO.TransformFileWriterTemplate.F.New(FileName=self.path + '_Composite.h5', Input=self)
+        writer = TransformIO.TransformFileWriterTemplate.F.New(FileName=self.path + self.ext, Input=self['fwd'])
         writer.Update()
+        writer = TransformIO.TransformFileWriterTemplate.F.New(FileName=self.path + '_InverseComposite.h5', Input=self['inv'])
+        writer.Update()
+
+    def __getitem__(self, __name):
+        if __name == 'fwd':
+            idx = 0
+        elif __name == 'inv':
+            idx = 1
+        else:
+            raise KeyError('wrong transform')
+        if (t := self._transforms[idx]) is not None:
+            return t
+        elif (reader := self._readers[idx]) is not None:
+            reader.Update()
+            self._transforms[idx] = Transforms.CompositeTransform.D3.cast(reader.GetTransformList()[0])
+            return self._transforms[idx]
+        else:
+            raise RuntimeError('object incorrectly initialized')
+
 
     @classmethod
     def fromfile(cls, path):
         try:
-            if os.path.exists(path + '_Composite.h5'): # avoid spam from itk vomiting a lot on stderr before raising the exception
-                composite = TransformIO.TransformFileReaderTemplate.D.New(FileName=path + '_Composite.h5')
+            if os.path.exists(path + cls.ext) and os.path.exists(path + '_InverseComposite.h5'): # avoid spam from itk vomiting a lot on stderr before raising the exception
+                composites = tuple(TransformIO.TransformFileReaderTemplate.D.New(FileName=path + f'_{s}Composite.h5') for s in ('', 'Inverse')) 
             else:
-                raise FileExistsError()
-            composite.Update()
-            return cls(Transforms.CompositeTransform.D3.cast(composite.GetTransformList()[0]), path)
+                raise FileNotFoundError()
+            # tuple(composite.Update() for composite in composites)
+            # return cls(tuple(Transforms.CompositeTransform.D3.cast(composite.GetTransformList()[0]) for composite in composites), path)
+            ret = cls([None, None], path)
+            ret._readers = composites
+            return ret
         except:
-            aff = TransformIO.TransformFileReaderTemplate.D.New(FileName=path + '_0GenericAffine.mat')
-            # TODO rotate axis
-            aff.Update()
-            aff = Transforms.AffineTransform.D3.cast(aff.GetTransformList()[0])
-            img =  ImageIO.ImageFileReader.D3.New(FileName=path + '_1Warp.nii.gz')
-            img.Update()
-            df = DisplacementFields.DisplacementFieldTransform.D3.New(DisplacementField=img)
-            composite = Transforms.CompositeTransform.D3.New()
-            composite.AddTransform(aff)
-            composite.AddTransform(df)
-            return cls(composite, path)
+            if os.path.exists(path + '_0GenericAffine.mat'):
+                aff = TransformIO.TransformFileReaderTemplate.D.New(FileName=path + '_0GenericAffine.mat')
+                # TODO rotate axis
+                aff.Update()
+                aff = Transforms.AffineTransform.D3.cast(aff.GetTransformList()[0])
+                img =  ImageIO.ImageFileReader.ID3.New(FileName=path + '_1Warp.nii.gz')
+                img.Update()
+                df = DisplacementFields.DisplacementFieldTransform.D3.New(DisplacementField=img)
+                composite = Transforms.CompositeTransform.D3.New()
+                composite.AddTransform(aff)
+                composite.AddTransform(df)
+                return cls(composite, path)
+            else:
+                raise FileNotFoundError()
 
 
 class FMappedMetadata(_FMappedBase):
     buffer = Incomplete
     _data_d = Incomplete
+    ext = '.json'
     # def __new__(cls, obj, path):
     #     inst = super().__new__(cls)
     #     inst._data_d = {}
@@ -92,7 +120,7 @@ class FMappedMetadata(_FMappedBase):
 
     def __init__(self, obj, path, ):
         self._data_d = {}
-        path = path + '.json'
+        path = path + self.ext
         self.buffer = open(path, 'w')
         self.update(obj)
         self.flush()
@@ -105,7 +133,7 @@ class FMappedMetadata(_FMappedBase):
     def fromfile(cls, path):
         inst = object.__new__(cls)
         inst._data_d = {}
-        path = path + '.json'
+        path = path + cls.ext
         inst.buffer = open(path, 'r+')
         inst.update({k: tuple(i) if type(i) is list else i for k, i in json.load(inst.buffer).items()})
         return inst
@@ -198,9 +226,9 @@ class MemoizedProperty:
                 cachepath: Any = getattr(instance, 'cachepath', instance.path)
                 instance_args = {name: instance.md[name] for name in self.f_args_names.union(self.d_args_names)}
             try:
-                tmp = self.memobj.fromfile(os.path.join(cachepath, self.name))
                 if instance_args:
                     if not self.skip_args:
+                        # print(f'checking args for {instance}.{self.name}')
                         with open(os.path.join(cachepath, self.name + '_args.json')) as fd:
                             saved_args = {k: tuple(i) if type(i) is list else i for k, i in json.load(fd).items()}
                         assert(saved_args == instance_args)
@@ -208,7 +236,12 @@ class MemoizedProperty:
                         with open(os.path.join(cachepath, self.name + '_args.json'), 'w') as fd:
                             json.dump(instance_args, fd)
                         saved_args = instance_args
-            except Exception:
+                tmp = self.memobj.fromfile(os.path.join(cachepath, self.name))
+            except Exception as e:
+                if self.memobj is not FMappedObj:
+                    print('aerr', e, self.name)
+                    #if os.path.exists(tmppath:=os.path.join(cachepath, self.name + '_args.json')): os.unlink(tmppath)
+                    #if os.path.exists(tmppath:=os.path.join(cachepath, self.name + self.memobj.ext)): os.unlink(tmppath)
                 tmp = self.memobj(self.function(instance, **{k: instance_args[k] for k in self.f_args_names}), os.path.join(cachepath, self.name))
                 if self.memobj is not FMappedObj:
                     tmp.flush()
