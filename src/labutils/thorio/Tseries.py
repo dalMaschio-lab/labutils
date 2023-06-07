@@ -24,8 +24,10 @@ class TExp(_ThorExp):
         'cell_flow_thr': 0,
         'cell_prob_thr': 0,
         'cell_diameter': 5.25e-06,
+        'cell_fuse_iou_threshold': .75,
+        # 'cell_fuse_shift_px': (2, 2)
     }
-    flyback_heuristics = ((0, (1/3,2/3)), (7/8, (3/4,1)), (1/4, (1/6, 1/3)))
+    flyback_heuristics = ((0, (1/3,2/3)), (7/8, (3/4,1)), )#(1/4, (1/6, 1/3)))
 
     def __init__(self, path, parent, **kwargs):
         super().__init__(path, parent, **kwargs)
@@ -34,7 +36,7 @@ class TExp(_ThorExp):
 
     @MemoizedProperty(dict)
     def md(self,):
-        xml = EL.parse(os.path.join(self.path, self.md_xml))
+        xml = EL.parse(os.path.join(self.path, self.md_xml), parser=EL.XMLParser(encoding="utf-8"))
         nplanes = self._pre_md['nplanes']
         zx2um = self._pre_md['zx2um']
         px2um = Incomplete
@@ -49,17 +51,26 @@ class TExp(_ThorExp):
                 totframes = int(child.get("timepoints", 0))
             # elif child.tag == "Magnification":
             #     mag = float(child.get("mag"))
+            elif child.tag == 'ExperimentNotes':
+                if (notes:=child.get('text')):
+                    for l in notes.splitlines():
+                        if 'nplanes' in l:
+                            nplanes = int(l.split('=')[-1])
+                        elif 'zx2um' in l:
+                            zx2um = float(l.split('=')[-1])
             elif child.tag == "LSM":
                 size = (int(child.get("pixelY",0)), int(child.get("pixelX",0)))
                 px2um = float(child.get("pixelSizeUM",1))
-                f2s = nplanes / float(child.get("frameRate",1))
+                f2s = float(child.get("frameRate",1))
 
         return {
             **self._pre_md,
             'time': utime,
             'shape': (totframes//nplanes, nplanes, *size),
-            'px2units': (f2s, 1e-6*zx2um, 1e-6*px2um, 1e-6*px2um),
+            'px2units': (nplanes / f2s, 1e-6*zx2um, 1e-6*px2um, 1e-6*px2um),
             'totframes': totframes,
+            'nplanes': nplanes,
+            'zx2um': zx2um,
         }
 
     @MemoizedProperty(to_file=False)
@@ -79,8 +90,8 @@ class TExp(_ThorExp):
                 flybacks = []
                 for i, fb in enumerate(flyback, start = 1):
                     if type(fb) is int: 
-                        fb = ('const', None, fb)
-                    elif fb:
+                        fb = ('const', 1, fb)
+                    if fb:
                         flyback_arr = self.get_flyback_fun(*fb)
                         calculated_flyback = fb[-1]
                         pos = self.flyback_heuristics[0][0]
@@ -96,10 +107,10 @@ class TExp(_ThorExp):
                                     .reshape((-1,  tmp.shape[i])), # reshape to have a rank 2 image 
                                 )
                                 print(f'>>>> found flyback {cf}px ')
-                                if abs(cf) >= 10:
-                                    calculated_flyback = cf
-                                    pos = poss
-                                    break
+                                # if abs(cf) >= 10:
+                                #     calculated_flyback = cf
+                                #     pos = poss
+                                #     break
                                 if abs(cf) > abs(calculated_flyback):
                                     calculated_flyback = cf
                                     pos = poss
@@ -116,7 +127,6 @@ class TExp(_ThorExp):
             import itk
             precision =  itk.F
             print(">>>> making reference...")
-            self.flyback # set flyback just in case
             c = self.img.shape[0] // 2
             center_block = self.img[c-150:c+150:20]
             ptp = np.percentile(center_block, (.5, 99.5))
@@ -167,12 +177,12 @@ class TExp(_ThorExp):
                 FixedImage=reference,
                 FixedInitialTransform=id_transform,
                 Optimizer=optimizer,
-                NumberOfLevels=1,
-                ShrinkFactorsPerLevel=(6,),
-                SmoothingSigmasPerLevel=(2,),
                 MetricSamplingStrategy=itk.ImageRegistrationMethodv4Enums.MetricSamplingStrategy_RANDOM,
                 MetricSamplingPercentage=.6,
             )
+            registrer.SetNumberOfLevels(1)
+            registrer.SetShrinkFactorsPerLevel((6,))
+            registrer.SetSmoothingSigmasPerLevel((2,))
             # movingInitialTransform = transform_base.New()
             # initialParameters = movingInitialTransform.GetParameters()
             # initialParameters.Fill(0.)
@@ -214,25 +224,36 @@ class TExp(_ThorExp):
             return out / div
 
     @MemoizedProperty(np.ndarray).depends_on(meanImg)
-    def masks_cells(self, cellpose_model, cell_flow_thr, cell_prob_thr, cell_diameter, px2units):
+    def masks_cells(self, cellpose_model, cell_flow_thr, cell_prob_thr, cell_fuse_iou_threshold, cell_diameter, px2units, ):
         with TerminalHeader(' [Mask Extraction] '):
-            from cellpose.models import CellposeModel
-            diameter = cell_diameter / px2units[-1]
+            from cellpose import models, utils
+            diameter = cell_diameter * 1.06 / px2units[-1]
             print(f'>>>> Cell diameter is: {diameter}px')
             print(f'>>>> Loading cellpose model {cellpose_model}')
+            print(f">>>> Adjusted cell fusion threshold is {cell_fuse_iou_threshold*(cell_diameter / px2units[1])}")
             if not os.path.exists(cellpose_model):
-                model = CellposeModel(model_type=cellpose_model)
+                model = models.CellposeModel(model_type=cellpose_model)
             else:
-                model = CellposeModel(pretrained_model=cellpose_model)
+                model = models.CellposeModel(pretrained_model=cellpose_model)
+            masks = []
             with tqdmlog(self.meanImg, unit='plane', desc='>>>> Running cellpose') as bar:
-                masks = np.stack([
-                model.eval(
-                    mplane, net_avg=True, channels=[0,0], diameter=diameter, 
-                    cellprob_threshold=cell_prob_thr, flow_threshold=cell_flow_thr)[0]
-                    for mplane in bar
-                ])
-            for masks_plane, mx in zip(masks[1:], np.cumsum(masks.max(axis=(1,2)))):
-                masks_plane[masks_plane > 0] += mx
+                for mplane in bar:
+                    mask, _, _ = model.eval(
+                        mplane, channels=[0,0], diameter=diameter,
+                        cellprob_threshold=cell_prob_thr, flow_threshold=cell_flow_thr,
+                        # z_axis=0, stitch_threshold=cell_fuse_iou_threshold, anisotropy=px2units[1]/px2units[-1]
+                    )
+                    masks.append(mask)
+            print('>>>> Stitching planes...')
+            # if any(cell_fuse_shift_px):
+            #     masks_0 = np.stack(masks)
+            #     masks = np.empty_like(masks_0)
+            #     for i, mplane in enumerate(masks_0):
+            #         outslices, frameslice = self.motionslices((cell_fuse_shift_px[0] * i, cell_fuse_shift_px[1] * i))
+            #         masks[i][outslices] = mplane[frameslice]
+            # else:
+            #     masks = np.stack(masks)
+            masks = utils.stitch3D(np.stack(masks), stitch_threshold=cell_fuse_iou_threshold*(cell_diameter / px2units[1]))
             print(f'>>>> {masks.max()} masks detected')
             return masks
 
@@ -281,10 +302,12 @@ class TExp(_ThorExp):
     @staticmethod
     def get_flyback_fun(*args):
         fun = {
-            "cos": np.cos,
+            "cos": (np.cos, np.arccos),
+            "exp": (lambda x: np.exp(np.abs(x)), np.log),
+            "const": (lambda x: -np.abs(x) + x.max(), lambda x: x)
         }[args[0]]
-        ptp_ratio = args[1]
-        return lambda A, pos, size: A * (fun(np.linspace(-(tmp:=np.arccos(ptp_ratio)), tmp, size)) + (pos)*(1-ptp_ratio))
+        ptp_ratio = fun[1](args[1])
+        return lambda A, pos, size: A * (fun[0](np.linspace(-ptp_ratio, ptp_ratio, size)) + (pos)*(1-args[1]))
     
     @staticmethod
     def motionslices(shifts):
