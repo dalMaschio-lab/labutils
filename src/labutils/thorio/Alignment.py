@@ -5,13 +5,10 @@ if TYPE_CHECKING:
     from _typeshed import Incomplete
 else:
     from typing import Any as Incomplete
-from .Zstack import ZExp
 from .thorio_common import _Image
 from ..filecache import MemoizedProperty
-from ..utils import _norm_u16stack2float, TerminalHeader, tqdmlog
-from ..zbatlas import MPIN_Atlas
-import sys, os, tempfile, numpy as np, subprocess, time #, zlib
-from skimage import feature
+from ..utils import TerminalHeader, tqdmlog
+import sys, os, numpy as np, subprocess, time, shutil #, zlib
 from scipy import ndimage
 from itk import (
     ITKMetricsv4 as Metrics,
@@ -74,17 +71,20 @@ class AlignableMixIn:
         mask.Update()
         return mask
 
-    def transform_points(self, points):
+    def transform_points(self, points, reverse=False):
         # TODO check if points need to be reversed
-        return np.stack([self.alignto_transforms.TransformPoint(p) for p in points])
+        return np.stack([self.alignto_transforms['inv' if not reverse else 'fwd'].TransformPoint(p) for p in points])
 
-    def transform_image(self, image, spacing=None, center=None, mp=1.0, return_reference=False):
+    def transform_image(self, image, spacing=None, center=None, mp=1.0, return_reference=False, reverse=False):
         if type(image) is np.ndarray:
             image, _ = self._getitkImage(image, spacing=np.array(spacing)*mp, center=np.array(center)*mp)
-        reference, _ = self._getitkImage(self.alignTo.meanImg, spacing=np.array(self.alignTo.md['px2units']) * mp)
+        reference, _ = self._getitkImage(
+            self.alignTo.meanImg if not reverse else self.meanImg,
+            spacing=mp * np.array(self.alignTo.md['px2units'] if not reverse else self.md.px2units[len(self.md.px2units) - self.meanImg.ndim:])
+        )
         resampler = itk.ResampleImageFilter[image, reference].New(
             Input=image,
-            Transform=self.alignto_transforms,
+            Transform=self.alignto_transforms['fwd' if not reverse else 'inv'],
             UseReferenceImage=True,
             ReferenceImage=reference,
         )
@@ -95,12 +95,20 @@ class AlignableMixIn:
         else:
             return resampler.GetOutput()
 
-    def check_alignment(self, mp=1.0):
-        moving, _ = self._getitkImage(self.meanImg, mp*np.array(self.md.px2units[len(self.md.px2units) - self.meanImg.ndim:]), )
-        transformed, reference = self.transform_image(moving, mp=mp, return_reference=True)
-        view = napari.view_image(itk.GetArrayViewFromImage(transformed), colormap='red')
-        view.add_image(itk.GetArrayViewFromImage(reference), opacity=.5, colormap='green')
+    def check_alignment(self, mp=1.0, reverse=False):
+        if reverse:
+            moving, _ = self._getitkImage(self.alignTo.meanImg, mp*np.array(self.alignTo.md.px2units), )
+            refname = os.path.basename(self.path)
+            name = os.path.basename(self.alignTo.path)
+        else:
+            moving, _ = self._getitkImage(self.meanImg, mp*np.array(self.md.px2units[len(self.md.px2units) - self.meanImg.ndim:]), )
+            name = os.path.basename(self.path)
+            refname = os.path.basename(self.alignTo.path)
+        transformed, reference = self.transform_image(moving, mp=mp, return_reference=True, reverse=reverse)
+        view = napari.view_image(itk.GetArrayViewFromImage(transformed), colormap='red', name=name, scale=np.array(transformed.GetSpacing())[::-1])
+        view.add_image(itk.GetArrayViewFromImage(reference), opacity=.5, colormap='green', name=refname, scale=np.array(reference.GetSpacing())[::-1])
         napari.run()
+        del moving, transformed, reference, view
 
 
 
@@ -110,6 +118,13 @@ class AlignableMixIn:
 # pnt: l->z:    z2lW    z2lA
 class AlignableMixInAnts(AlignableMixIn):
     antsbin='/opt/ANTs/bin'
+    _base_md = {
+        'ANTsInterpolation': 'WelchWindowedSinc',
+        'ANTsHistMatch': True,
+        'ANTsWinInt': (.5, .995),
+        'ANTsTemp': None,
+        'AlignStages': {}
+    }
     @MemoizedProperty(Transforms.CompositeTransform.D3)
     def alignto_transforms(self, px2units, alignTo, AlignStages, ANTsInterpolation, ANTsHistMatch, ANTsWinInt, ANTsTemp):
         with TerminalHeader(' [Registration] '):
@@ -143,10 +158,9 @@ class AlignableMixInAnts(AlignableMixIn):
                     '--smoothing-sigmas', 'x'.join(map(str,smoothing_s))
                 ))
                 bar_helper.append((iterations, params["convergenceVal"]))
-            
             print(">>>> Saving alignment images...")
-            reference, win_r = self._getitkImage(self.alignTo.meanImg, 1e6*np.array(self.alignTo.md['px2units']), ptp=(1.5, 99.99), window=(0.1, 120))
-            moving, _ = self._getitkImage(self.meanImg, 1e6*np.array(px2units[len(px2units) - self.meanImg.ndim:]),)# ptp=(0.1, 99.99))
+            reference, win_r = self._getitkImage(self.alignTo.meanImg, 1e6*np.array(self.alignTo.md['px2units']), ptp=(0.5, 99.99), window=(0.01, 120))
+            moving, _ = self._getitkImage(self.meanImg, 1e6*np.array(px2units[len(px2units) - self.meanImg.ndim:]), window=win_r, ptp=(1.5,99.9))
             ImageIO.ImageFileWriter(FileName=moving_fn, Input=moving)
             ImageIO.ImageFileWriter(FileName=reference_fn, Input=reference)
 
@@ -185,7 +199,7 @@ class AlignableMixInAnts(AlignableMixIn):
                 else:
                     antsdump += line
                     ts = .001
-                    #print(line, end='')
+                    # print(line, end='')
                 time.sleep(min(ts,5))
 
             p.stdout.close()
@@ -201,20 +215,23 @@ class AlignableMixInAnts(AlignableMixIn):
             composite = TransformIO.TransformFileReaderTemplate.D.New(FileName=outtr_prefx + 'Composite.h5')
             composite.Update()
             composite = Transforms.CompositeTransform.D3.cast(composite.GetTransformList()[0])
+            compositei = TransformIO.TransformFileReaderTemplate.D.New(FileName=outtr_prefx + 'InverseComposite.h5')
+            compositei.Update()
+            compositei = Transforms.CompositeTransform.D3.cast(compositei.GetTransformList()[0])
             os.unlink(outtr_prefx + 'Composite.h5')
             os.unlink(outtr_prefx + 'InverseComposite.h5')
         
-        return composite
+        return (composite, compositei)
 
-    def transform_points(self, points):
+    def transform_points(self, points, reverse=False):
         # TODO check if points need to be reversed
-        return super().transform_points(points*1e6) * 1e-6
+        return super().transform_points(points*1e6, reverse=reverse) * 1e-6
 
-    def transform_image(self, image, spacing=None, center=None, mp=1e6, return_reference=False):
-        return super().transform_image(image, spacing, center, mp, return_reference)
+    def transform_image(self, image, spacing=None, center=None, mp=1e6, return_reference=False, reverse=False):
+        return super().transform_image(image, spacing, center, mp, return_reference, reverse=reverse)
 
-    def check_alignment(self, mp=1e6):
-        return super().check_alignment(mp)
+    def check_alignment(self, mp=1e6, reverse=False):
+        return super().check_alignment(mp, reverse=reverse)
 
 
 class AlignableMixInITK(AlignableMixIn):

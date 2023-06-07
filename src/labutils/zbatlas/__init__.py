@@ -1,6 +1,6 @@
 import json, os, requests, vedo
 import numpy as np
-
+from .atlastack import Template, LiveTemplate
 
 class BrainRegion(object):
     def __init__(self, name, path, k, parent=None, children=None, color=None, broken_stl=True, flip_normal=False):
@@ -28,24 +28,14 @@ class BrainRegion(object):
         return self._mesh
 
     def is_inside(self, points):
-        return self.mesh.insidePoints(points, returnIds=True)
+        return self.mesh.inside_points(points, return_ids=True)
 
 
 class MPIN_Atlas:
     json_region ='load_regions_data.json'
-    def __init__(self, path):
-        self.live_template = os.path.join(path, 'MPIN-Atlas__Reference_brains__Live__HuCH2BGCaMP.nrrd')
-        self.std_template = os.path.join(path, 'MPIN-Atlas__Reference_brains__Fixed__HuC.nrrd')
-        self.antsoptpoints = {
-            'this2std': [
-                "-t", f"[{path}/live2fixed_0GenericAffine.mat,1]",
-                "-t", f"[{path}/live2fixed_1InverseWarp.nii.gz]",
-            ],
-            'std2this': [
-                "-t", f"[{path}/live2fixed_1Warp.nii.gz]",
-                "-t", f"[{path}/live2fixed_0GenericAffine.mat]",
-            ]
-        }
+    def __init__(self, path='/mnt/net/nasdmicro/reference_brain_V2'):
+        self.std_template = Template(os.path.join(path, 'MPIN-Atlas__Reference_brains__Fixed__HuCnlsGCaMP'), self)
+        self.live_template = LiveTemplate(os.path.join(path, 'MPIN-Atlas__Reference_brains__Live__HuCH2BGCaMP'), self, alignTo=self.std_template)
         with open(os.path.join(path, "url")) as fd:
             remote_url = fd.readline().strip()
         if not os.path.exists(os.path.join(path, self.json_region)):
@@ -75,14 +65,16 @@ class MPIN_Atlas:
                 os.makedirs(r_path, exist_ok=True)
                 broken_stl = True
                 if not os.path.exists(os.path.join(r_path, "stl.stl")):
-                    response = requests.get(remote_url + i['downloads']['stl'])
-                    if response.status_code == 200:
-                        broken_stl = False
-                        with open(os.path.join(r_path, "stl.stl"), 'w') as fd:
-                            fd.write(response.text)
-                    else:
-                        print(response.status_code, i['name'])
-                    response.close()
+                    pass
+                    #TODO fix me
+                    # response = requests.get(remote_url + i['downloads']['stl'])
+                    # if response.status_code == 200:
+                    #     broken_stl = False
+                    #     with open(os.path.join(r_path, "stl.stl"), 'w') as fd:
+                    #         fd.write(response.text)
+                    # else:
+                    #     print(response.status_code, i['name'])
+                    # response.close()
                 else:
                     broken_stl = False
 
