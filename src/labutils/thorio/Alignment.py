@@ -159,8 +159,8 @@ class AlignableMixInAnts(AlignableMixIn):
                 ))
                 bar_helper.append((iterations, params["convergenceVal"]))
             print(">>>> Saving alignment images...")
-            reference, win_r = self._getitkImage(self.alignTo.meanImg, 1e6*np.array(self.alignTo.md['px2units']), ptp=(0.5, 99.99), window=(0.01, 120))
-            moving, _ = self._getitkImage(self.meanImg, 1e6*np.array(px2units[len(px2units) - self.meanImg.ndim:]), window=win_r, ptp=(1.5,99.9))
+            reference, win_r = self._getitkImage(self.alignTo.meanImg, 1e6*np.array(self.alignTo.md['px2units']), ptp=(.5, 99.99), window=(0.01, 120))
+            moving, _ = self._getitkImage(self.meanImg, 1e6*np.array(px2units[len(px2units) - self.meanImg.ndim:]), window=win_r, ptp=(.5,99.9))
             ImageIO.ImageFileWriter(FileName=moving_fn, Input=moving)
             ImageIO.ImageFileWriter(FileName=reference_fn, Input=reference)
 

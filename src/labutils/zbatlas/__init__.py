@@ -20,7 +20,10 @@ class BrainRegion(object):
             return None
         elif self._mesh is None:
             self._mesh = vedo.io.load(os.path.join(self.path, 'stl.stl'))
-            self._mesh.color(self.color, alpha=.3)
+            self._mesh.color(self.color, alpha=.6).compute_normals()
+            self._mesh.backface_culling()
+            self._mesh.smooth()
+            self._mesh.phong()
             if self.flip_normal:
                 self._mesh.reverse(normals=True)
         else:

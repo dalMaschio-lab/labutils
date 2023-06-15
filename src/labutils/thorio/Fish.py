@@ -44,7 +44,7 @@ class AlignableTExp(AlignableMixInAnts, TExp):
                         'MetricSamplingPercentage': 60.,
                     }
                 ],
-                'levels': [[40, 8, 4], [40, 6, 3],[30, 4, 2], [20, 3, 2]],# [(200, 12, 4), (200, 8, 3), (100, 4, 2), (80, 2, 2)],
+                'levels': [[40, 8, 4], [40, 6, 3],[30, 4, 2], [30, 3, 2]],# [(200, 12, 4), (200, 8, 3), (100, 4, 2), (80, 2, 2)],
                 'learnRate': .1,
                 'convergenceWin': 5,
                 'convergenceVal': 1e-4,
@@ -59,7 +59,7 @@ class AlignableTExp(AlignableMixInAnts, TExp):
                         'MetricSamplingPercentage': 60.,
                     }
                 ],
-                'levels': [[40, 8, 4],[10, 4, 2], [10, 3, 2]],#[10, 3, 2]],# [(200, 12, 4), (200, 8, 3), (100, 4, 2), (80, 2, 2)],
+                'levels': [[40, 8, 4],[10, 4, 2], ],#[10, 3, 2]],# [(200, 12, 4), (200, 8, 3), (100, 4, 2), (80, 2, 2)],
                 'learnRate': .1,#.15,
                 'updateFieldVar': 0.6,
                 'totalFieldVar': 6,
