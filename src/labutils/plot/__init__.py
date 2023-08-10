@@ -2,12 +2,15 @@ from . import tol_colors as tolc
 import os
 import itertools as it
 import numpy as np
-from matplotlib import pyplot as plt
+from matplotlib import pyplot as plt, collections
 from scipy import stats
 
 plt.rcParams.update({'font.size':18})
 plt.rcParams['svg.fonttype'] = 'none'
 plt.rcParams["mathtext.default"] = 'regular'
+
+plt.Axes.quantify = lambda self, data, ticks, colors, width=.2, outlier=True, mann_alt='two-sided', dbg=False: quantify(data, ticks, colors, axes=self, width=width, outlier=outlier, mann_alt=mann_alt, dbg=dbg)
+plt.Axes.strace = lambda self, x, y, c, cmap='viridis', **kwargs: strace(x, y, c, cmap=cmap, axes=self, **kwargs)
 class AutoFigure(object):
     figsize_save = {"figsize": (20,10), "dpi": 90}
     figsize_show = {"figsize": (16,9), "dpi": 120}
@@ -28,8 +31,14 @@ class AutoFigure(object):
             ncols=ncols, nrows=nrows,
             sharex=sharex, sharey=sharey,
             gridspec_kw=gridspecs, **(self.figsize_save if path else self.figsize_show))
+        # if not isinstance(self.axes, np.ndarray):
+        #     axes = (self.axes,)
+        # else:
+        #     axes = self.axes
+        # for ax in axes:
+        #     make_metho
 
-    def __enter__(self):
+    def __enter__(self) -> "(plt.Figure, plt.Axes|[plt.Axes]|[[plt.Axes]])":
         return self.figure, self.axes
 
     def __exit__(self, type, value, traceback):
@@ -45,6 +54,18 @@ class AutoFigure(object):
         self.style_ctx.__exit__(type, value, traceback)
         return False
 
+def strace(x, y, c, cmap='viridis', axes=None, vmin=None, vmax=None, **kwargs):
+    if axes is None:
+        axes = plt.gca()
+    points = np.array([x, y]).T.reshape(-1, 1, 2)
+    segments = np.concatenate([points[:-1], points[1:]], axis=1)
+    norm = plt.Normalize(vmin if vmin is not None else c.min(), vmax if vmax is not None else c.max())
+    lc = collections.LineCollection(segments, cmap=cmap, norm=norm, **kwargs)
+    lc.set_array(c)
+    lcs = axes.add_collection(lc)
+    axes._request_autoscale_view(scalex=kwargs.get('scalex', True), scaley=kwargs.get('scaley', True))
+    return lcs
+
 def quantify(data, ticks, colors, axes=None, width=.2, outlier=True, mann_alt='two-sided', dbg=False):
     (pvalmn := np.empty((len(ticks), len(ticks)))).fill(np.NaN)
     if axes is None:
@@ -55,7 +76,7 @@ def quantify(data, ticks, colors, axes=None, width=.2, outlier=True, mann_alt='t
         patch_artist=True, zorder=.5, meanline=False, medianprops={"marker": '*', "zorder": 2.5}
     )
     [(patch.set_facecolor(c)) for patch,c in zip(b["boxes"], colors)] 
-    [
+    dots = [
         axes.plot(
             np.random.normal(i, width/3, size=datacol.size), datacol,
             mfc=colors[i], mec="k", marker="o", ls="", alpha=.8, zorder=1.5
@@ -79,7 +100,7 @@ def quantify(data, ticks, colors, axes=None, width=.2, outlier=True, mann_alt='t
             make_sigbar(pval, couple, max(datacol[np.isfinite(datacol)].max() for datacol in data), axis=axes, pos=couple[1]-couple[0], dbg=dbg)
             pvalmn[couple[0], couple[1]] = pval
         pvalk = stats.kruskal(*data)[1]
-    return pvalmn, pvalk, *zip(*[(d.mean(), d.std()) for d in data])
+    return b, dots, {'pvalmn': pvalmn, 'pvalk': pvalk}
 
 def make_sigbar(pval, xticks, ypos, axis=None, pos=0, log=False, dbg=False):
     if axis is None:
