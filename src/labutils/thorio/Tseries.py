@@ -216,7 +216,7 @@ class TExp(_ThorExp):
         with TerminalHeader(' [Mean image] '):
             out = np.zeros(self.img.shape[1:])
             div = np.zeros(self.img.shape[1:])
-            with tqdmlog(zip(self.img, np.round(self.motion_transforms).astype(np.intp)), desc='>>>> calculating mean offsets', total=self.img.shape[0], unit='frames') as bar:
+            with tqdmlog(zip(self.img, np.rint(self.motion_transforms).astype(np.intp)), desc='>>>> calculating mean offsets', total=self.img.shape[0], unit='frames') as bar:
                 for frame, ttt in bar:
                     outslices, frameslices = self.motionslices(ttt)
                     out[outslices] += frame[frameslices]
@@ -274,10 +274,9 @@ class TExp(_ThorExp):
             Fraw = np.empty((self.img.shape[0], self.masks_cells.max() - 1),)
             print(f'>>>> Making cells indexes from masks')
             cells_idxs = numba.typed.List((self.masks_cells.reshape(-1) == i+1).nonzero()[0] for i in range(Fraw.shape[-1]))
-            with tqdmlog(zip(self.img, *np.modf(self.motion_transforms[:, 0]) ,np.round(self.motion_transforms[:, 1:]).astype(np.intp), Fraw), desc='>>>> extracting traces', total=self.img.shape[0], unit='frames') as bar:
+            with tqdmlog(zip(self.img, *np.modf(self.motion_transforms[:, 0]) ,np.rint(self.motion_transforms[:, 1:]).astype(np.intp), Fraw), desc='>>>> extracting traces', total=self.img.shape[0], unit='frames') as bar:
                 for frame, fzt, zt, tt, fraw in bar:
-                    extended_frame = np.empty_like(frame, dtype=np.float32)
-                    extended_frame.fill(np.NaN)
+                    extended_frame = np.full_like(frame, fill_value=np.NaN, dtype=np.float32)
                     zt = int(zt)
                     if fzt < 0.1:
                         outslices, frameslices = self.motionslices((zt, *tt))
