@@ -123,10 +123,11 @@ class AlignableMixInAnts(AlignableMixIn):
         'ANTsHistMatch': True,
         'ANTsWinInt': (.5, .995),
         'ANTsTemp': None,
+        'ANTsInit': 1,
         'AlignStages': {}
     }
-    @MemoizedProperty(Transforms.CompositeTransform.D3)
-    def alignto_transforms(self, px2units, alignTo, AlignStages, ANTsInterpolation, ANTsHistMatch, ANTsWinInt, ANTsTemp):
+    @MemoizedProperty(Transforms.CompositeTransform.D3, )
+    def alignto_transforms(self, px2units, alignTo, AlignStages, ANTsInterpolation, ANTsHistMatch, ANTsWinInt, ANTsTemp, ANTsInit):
         with TerminalHeader(' [Registration] '):
             print(">>>> Parsing parameters...")
             alignpath = ANTsTemp if ANTsTemp is not None else self.path
@@ -141,7 +142,7 @@ class AlignableMixInAnts(AlignableMixIn):
                 "--interpolation", ANTsInterpolation,
                 "--winsorize-image-intensities", f"[{ANTsWinInt[0]:.3f},{ANTsWinInt[1]:.3f}]",
                 "--use-histogram-matching", str(1 if ANTsHistMatch else 0),
-                "-r", f"[{reference_fn},{moving_fn},1]",
+                "-r", f"[{reference_fn},{moving_fn},{ANTsInit}]",
             ]
             bar_helper = []
             for stage, params in AlignStages.items():
