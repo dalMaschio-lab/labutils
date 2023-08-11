@@ -7,7 +7,7 @@ from xml.etree import ElementTree as EL
 import os, copy, time
 from math import prod
 # from tqdm.auto import trange, tqdm
-from scipy import stats
+from scipy import stats, signal
 import numba
 
 
@@ -24,7 +24,8 @@ class TExp(_ThorExp):
         'cell_flow_thr': 0,
         'cell_prob_thr': 0,
         'cell_diameter': 5.25e-06,
-        'cell_fuse_iou_threshold': .75,
+        'cell_fuse_threshold': .5,
+        'iou_to_corr': .7,
         # 'cell_fuse_shift_px': (2, 2)
     }
     flyback_heuristics = ((0, (1/3,2/3)), (7/8, (3/4,1)), )#(1/4, (1/6, 1/3)))
@@ -224,13 +225,12 @@ class TExp(_ThorExp):
             return out / div
 
     @MemoizedProperty(np.ndarray).depends_on(meanImg)
-    def masks_cells(self, cellpose_model, cell_flow_thr, cell_prob_thr, cell_fuse_iou_threshold, cell_diameter, px2units, ):
-        with TerminalHeader(' [Mask Extraction] '):
-            from cellpose import models, utils
+    def masks_cells_raw(self, cellpose_model, cell_flow_thr, cell_prob_thr, cell_diameter, px2units, ):
+        with TerminalHeader(' [Masks Extraction] '):
+            from cellpose import models
             diameter = cell_diameter * 1.06 / px2units[-1]
             print(f'>>>> Cell diameter is: {diameter}px')
             print(f'>>>> Loading cellpose model {cellpose_model}')
-            print(f">>>> Adjusted cell fusion threshold is {cell_fuse_iou_threshold*(cell_diameter / px2units[1])}")
             if not os.path.exists(cellpose_model):
                 model = models.CellposeModel(model_type=cellpose_model)
             else:
@@ -244,24 +244,73 @@ class TExp(_ThorExp):
                         # z_axis=0, stitch_threshold=cell_fuse_iou_threshold, anisotropy=px2units[1]/px2units[-1]
                     )
                     masks.append(mask)
-            print('>>>> Stitching planes...')
-            # if any(cell_fuse_shift_px):
-            #     masks_0 = np.stack(masks)
-            #     masks = np.empty_like(masks_0)
-            #     for i, mplane in enumerate(masks_0):
-            #         outslices, frameslice = self.motionslices((cell_fuse_shift_px[0] * i, cell_fuse_shift_px[1] * i))
-            #         masks[i][outslices] = mplane[frameslice]
-            # else:
-            #     masks = np.stack(masks)
-            masks = utils.stitch3D(np.stack(masks), stitch_threshold=cell_fuse_iou_threshold*(cell_diameter / px2units[1]))
-            print(f'>>>> {masks.max()} masks detected')
-            return masks
+        return np.stack(masks)
+
+    @MemoizedProperty(np.ndarray).depends_on(masks_cells_raw, img, motion_transforms, flyback)
+    def masks_cells(self, cell_fuse_threshold, cell_diameter, px2units, iou_to_corr):
+        with TerminalHeader(' [Masks Stitching] '):
+            from cellpose import metrics as mask_metrics
+            ## cell traces
+            masks_cells_raw = self.masks_cells_raw.copy()
+            raw_max = np.cumsum(masks_cells_raw.max(axis=(1,2)), dtype=np.intp)
+            masks_cells_raw_ = masks_cells_raw.astype(np.intp)
+            masks_cells_raw_[1:] += raw_max[:-1, np.newaxis, np.newaxis]
+            masks_cells_raw_[masks_cells_raw == 0] = 0
+            Fraw = np.empty((self.img.shape[0], raw_max[-1]),)
+            print(f'>>>> Making cells indexes from raw masks')
+            cells_idxs = numba.typed.List((masks_cells_raw_.reshape(-1) == i+1).nonzero()[0] for i in range(Fraw.shape[-1]))
+            with tqdmlog(zip(self.img, *np.modf(self.motion_transforms[:, 0]) ,np.rint(self.motion_transforms[:, 1:]).astype(np.intp), Fraw), desc='>>>> extracting raw mask traces', total=self.img.shape[0], unit='frames') as bar:
+                for frame, fzt, zt, tt, fraw in bar:
+                    extended_frame = np.full_like(frame, fill_value=np.NaN, dtype=np.float32)
+                    zt = int(zt)
+                    outslices, frameslices  = self.motionslices((zt, *tt))
+                    extended_frame[outslices] = frame[frameslices] * (1. - fzt)
+                    outslices, frameslices  = self.motionslices((zt + 1, *tt))
+                    extended_frame[outslices] += frame[frameslices] *  fzt
+                    self.extract_traces(extended_frame.reshape(-1), cells_idxs, fraw)
+            number_pix = np.array(tuple(idxs.size for idxs in cells_idxs))
+            Fraw /= number_pix[np.newaxis, :]
+            Fraw = Fraw.T
+            Fraw[np.isnan(Fraw)] = 0
+            window = np.hanning(int(5 / px2units[0]))
+            window /= window.sum()
+            Fraw = signal.convolve(Fraw, window[np.newaxis, :],mode='same')
+            Fraw=stats.zscore(Fraw, axis=1)
+
+            masks = np.zeros_like(masks_cells_raw)
+            masks[0] = masks_cells_raw[0]
+            istitch = np.arange(1, raw_max[0] + 1, dtype=np.intp)
+            with tqdmlog(range(len(masks_cells_raw)-1), unit='plane', desc='>>>> Stitching   0 rois') as bar:
+                for plane_idx in bar:
+                    plane = masks[plane_idx]
+                    plane_1 = masks_cells_raw[plane_idx+1].copy()
+                    iou = mask_metrics._intersection_over_union(plane_1, plane)[1:, istitch]
+                    corr = np.einsum(
+                        "ut,td->ud",
+                        u:=Fraw[np.arange(plane_1.max(), dtype=np.intp) + raw_max[plane_idx]],
+                        d:=Fraw[np.arange(raw_max[plane_idx-1] if plane_idx > 0 else 0, raw_max[plane_idx], dtype=np.intp)].T,
+                    )
+                    corr /= np.einsum('u,d->ud', np.linalg.norm(u, axis=1), np.linalg.norm(d, axis=0))
+                    final_closest = (1-iou_to_corr) * corr + iou_to_corr * iou
+                    final_closest[iou==0] = 0
+                    # eliminate values under the threshold
+                    final_closest[final_closest < cell_fuse_threshold] = 0.0
+                    # make so one plane roi can match with at max one plane_1 roi
+                    final_closest[final_closest < final_closest.max(axis=0)] = 0.0
+                    # get the best stitch candidate for each plane_1 roi
+                    istitch = istitch[np.argmax(final_closest, axis=1)]
+                    # remove cell that shouldn't be fused
+                    no_fuse = final_closest.sum(axis=1) == 0.0
+                    istitch[no_fuse] = 1 + plane.max() + np.arange(no_fuse.sum(), dtype=np.intp)
+                    bar.set_description(f">>>> Stitching {len(no_fuse)- no_fuse.sum():>3} rois")
+                    masks[plane_idx+1] = np.append([0], istitch)[plane_1]
+        return masks
 
     @MemoizedProperty(np.ndarray).depends_on(masks_cells)
     def center_cells(self, ):
-        with TerminalHeader(' [Position of center of cells] '):
-            cell_pos = np.empty((self.masks_cells.max()-1, 3))
-            with tqdmlog(np.arange(1, self.masks_cells.max()), desc='>>>> extracting cell shaps from masks', unit='ROIs') as bar:
+        with TerminalHeader(' [ROIs centroids] '):
+            cell_pos = np.empty((self.masks_cells.max(), 3))
+            with tqdmlog(np.arange(1, self.masks_cells.max()), desc='>>>> extracting roi centroids from masks', unit='ROIs') as bar:
                 for n in bar:
                     tmp = (self.masks_cells.reshape(-1) == n).nonzero()[0]
                     cell_pos[n-1, :] = np.mean(np.unravel_index(tmp, self.masks_cells.shape), axis=1)
@@ -271,27 +320,20 @@ class TExp(_ThorExp):
     @MemoizedProperty(np.ndarray).depends_on(masks_cells, img, motion_transforms, flyback)
     def Fraw_cells(self):
         with TerminalHeader(' [Fluorescence traces extraction] '):
-            Fraw = np.empty((self.img.shape[0], self.masks_cells.max() - 1),)
+            Fraw = np.empty((self.img.shape[0], self.masks_cells.max()),)
             print(f'>>>> Making cells indexes from masks')
             cells_idxs = numba.typed.List((self.masks_cells.reshape(-1) == i+1).nonzero()[0] for i in range(Fraw.shape[-1]))
             with tqdmlog(zip(self.img, *np.modf(self.motion_transforms[:, 0]) ,np.rint(self.motion_transforms[:, 1:]).astype(np.intp), Fraw), desc='>>>> extracting traces', total=self.img.shape[0], unit='frames') as bar:
                 for frame, fzt, zt, tt, fraw in bar:
                     extended_frame = np.full_like(frame, fill_value=np.NaN, dtype=np.float32)
                     zt = int(zt)
-                    if fzt < 0.1:
-                        outslices, frameslices = self.motionslices((zt, *tt))
-                        extended_frame[outslices] = frame[frameslices]
-                    elif fzt > 0.9:
-                        outslices, frameslices = self.motionslices((zt+1, *tt))
-                        extended_frame[outslices] = frame[frameslices]
-                    else:
-                        outslices, frameslices  = self.motionslices((zt, *tt))
-                        extended_frame[outslices] = frame[frameslices] * (1. - fzt)
-                        outslices, frameslices  = self.motionslices((zt + 1, *tt))
-                        extended_frame[outslices] += frame[frameslices] *  fzt
+                    outslices, frameslices  = self.motionslices((zt, *tt))
+                    extended_frame[outslices] = frame[frameslices] * (1. - fzt)
+                    outslices, frameslices  = self.motionslices((zt + 1, *tt))
+                    extended_frame[outslices] += frame[frameslices] *  fzt
                     self.extract_traces(extended_frame.reshape(-1), cells_idxs, fraw)
-            number_pix = tuple(idxs.size for idxs in cells_idxs)
-            Fraw /= np.tile(number_pix, (self.img.shape[0], 1))
+            number_pix = np.array(tuple(idxs.size for idxs in cells_idxs))
+            Fraw /= number_pix[np.newaxis, :]
         return Fraw.T
 
     @MemoizedProperty(to_file=False).depends_on(Fraw_cells)
