@@ -63,7 +63,7 @@ def strace(x, y, c, cmap='viridis', axes=None, vmin=None, vmax=None, **kwargs):
     lc = collections.LineCollection(segments, cmap=cmap, norm=norm, **kwargs)
     lc.set_array(c)
     lcs = axes.add_collection(lc)
-    axes._request_autoscale_view(scalex=kwargs.get('scalex', True), scaley=kwargs.get('scaley', True))
+    axes.autoscale(axis=kwargs.get('scaleax', 'both'))
     return lcs
 
 def quantify(data, ticks, colors, axes=None, width=.2, outlier=True, mann_alt='two-sided', dbg=False):
@@ -102,7 +102,7 @@ def quantify(data, ticks, colors, axes=None, width=.2, outlier=True, mann_alt='t
         pvalk = stats.kruskal(*data)[1]
     return b, dots, {'pvalmn': pvalmn, 'pvalk': pvalk}
 
-def make_sigbar(pval, xticks, ypos, axis=None, pos=0, log=False, dbg=False):
+def make_sigbar(pval, xticks, ypos, axis:plt.Axes=None, pos=0, log=False, dbg=False):
     if axis is None:
         axis=plt.gca()
     ytick = axis.get_yticks()
@@ -125,5 +125,6 @@ def make_sigbar(pval, xticks, ypos, axis=None, pos=0, log=False, dbg=False):
     txt = axis.text(sum(xticks,0)/2, ypos + ytick, pval if pval else "")
     if pval:
         axis.plot(xticks, (ypos, ypos), color=(0,0,0))
-    _, mx =axis.get_ylim()
-    axis.set_ylim((None, max(ypos+ytick*4, mx)))
+    #_, mx =axis.get_ylim()
+    #axis.set_ylim((None, max(ypos+ytick*4, mx)))
+    axis.autoscale(axis='y')
