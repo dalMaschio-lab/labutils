@@ -5,9 +5,6 @@ import numpy as np
 from matplotlib import pyplot as plt, collections
 from scipy import stats
 
-plt.rcParams.update({'font.size':18})
-plt.rcParams['svg.fonttype'] = 'none'
-plt.rcParams["mathtext.default"] = 'regular'
 
 plt.Axes.quantify = lambda self, data, ticks, colors, width=.2, outlier=True, parametric=False, mann_alt='two-sided', dbg=False: quantify(data, ticks, colors, axes=self, width=width, outlier=outlier, parametric=parametric, mann_alt=mann_alt, dbg=dbg)
 plt.Axes.strace = lambda self, x, y, c, cmap='viridis', **kwargs: strace(x, y, c, cmap=cmap, axes=self, **kwargs)
@@ -69,16 +66,49 @@ def quantify(data, ticks, colors, axes=None, width=.2, outlier=True, mann_alt='t
         group_t = stats.kruskal
     if axes is None:
         axes = plt.gca()
-    b = axes.boxplot(
-        data, positions=np.arange(len(ticks)), labels=ticks,
-        notch=False, widths=width, whis=(5,95), showfliers=False,
-        patch_artist=True, zorder=.5, meanline=False, medianprops={"marker": '*', "zorder": 2.5}
-    )
-    [(patch.set_facecolor(c)) for patch,c in zip(b["boxes"], colors)] 
+    if violinplot:
+        b = axes.violinplot(
+            data, positions=np.arange(len(ticks)),
+            widths=width, showmedians=True, showextrema=False, quantiles=((.25,.75),)*len(ticks)
+        )
+        [(patch.set_facecolor(c), patch.set_alpha(.8), patch.set_edgecolor('k')) for patch,c in zip(b["bodies"], colors)]
+        pathinterp = []
+        for i, patch in enumerate(b['bodies']):
+            ph = patch.get_paths()[0].vertices[patch.get_paths()[0].vertices[:, 0] > i]
+            ph = ph[np.argsort(ph[:,1])]
+            ph = ph[np.diff(ph[:,1], prepend=0) > 0]
+            pathinterp.append(ph)
+            patch.get_paths()[0].vertices[:, 0] = np.clip(patch.get_paths()[0].vertices[:, 0], i, np.inf)
+            patch.set_linewidth(plt.rcParams['lines.linewidth'] * 0.8)
+        b['cmedians'].set_linestyle('--')
+        b['cmedians'].set_linewidth(plt.rcParams['lines.linewidth'] * 0.8)
+        b['cmedians'].set_color('k')
+        b['cmedians'].set_segments([((i, sg[0,1]), (np.interp(sg[0,1],*patch.T[::-1]), sg[1,1])) for sg, patch, i in zip(b['cmedians'].get_segments(), pathinterp,np.arange(len(ticks)))])
+        b['cquantiles'].set_linestyle('-.')
+        b['cquantiles'].set_linewidth(plt.rcParams['lines.linewidth'] * 0.4)
+        b['cquantiles'].set_color('k')
+        b['cquantiles'].set_segments([
+            ((i, sg[0,1]), (np.interp(sg[0,1],*patch.T[::-1]), sg[1,1]))
+            for sgg, patch, i in zip(zip(b['cquantiles'].get_segments()[::2], b['cquantiles'].get_segments()[1::2]), pathinterp, np.arange(len(ticks)))
+            for sg in sgg
+        ])
+        axes.set_xticks(tuple(range(len(ticks))), labels=ticks)
+    else:
+        b = axes.boxplot(
+            data, positions=np.arange(len(ticks)), labels=ticks,
+            notch=False, widths=width, whis=(5,95), showfliers=False,
+            patch_artist=True, zorder=.5, meanline=False, medianprops={"marker": '*', "zorder": 2.5}
+        )
+        [(patch.set_facecolor(c)) for patch,c in zip(b["boxes"], colors)]
+    between = lambda x, pct: pct[0] < x < pct[1]
     dots = [
         axes.plot(
-            np.random.normal(i, width/3, size=datacol.size), datacol,
+            xscatter(datacol, i, width, half=violinplot), datacol,
             mfc=colors[i], mec="k", marker="o", ls="", alpha=.8, zorder=1.5
+        ) if outlier else
+        axes.scatter(
+            xscatter(datacol, i, width, half=violinplot), datacol, s=[(plt.rcParams['lines.markersize'] * (1. if between(p, np.percentile(datacol, (5,95))) else .5))** 2 for p in datacol],
+            c=colors[i], edgecolors='k', marker="o", alpha=.8, zorder=1.5, ls=''
         )
         for i,datacol in enumerate(data)
     ]
@@ -101,6 +131,11 @@ def quantify(data, ticks, colors, axes=None, width=.2, outlier=True, mann_alt='t
             pvalmn[couple[0], couple[1]] = pval
         pvalk = group_t(*data).pvalue
     return b, dots, {'pvalmn': pvalmn, 'pvalk': pvalk}
+
+def xscatter(data, xpos, width, half=False, margin=.02):
+    counts, edges = np.histogram(data,)
+    xvals = [(margin if half or (i%2) else -margin) + (np.linspace(0 if half else -width * (c / max(counts)), width * (c / max(counts)), num=c) if c > 1 else np.array((0,))) for i, c in enumerate(counts)]
+    return xpos - np.concatenate(xvals)[np.digitize(data, edges[:-1]).argsort().argsort()]
 
 def make_sigbar(pval, xticks, ypos, axis:plt.Axes=None, pos=0, log=False, dbg=False):
     if axis is None:
