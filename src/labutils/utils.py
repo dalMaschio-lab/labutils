@@ -1,17 +1,32 @@
 import numpy as np
 from skimage import transform
 from scipy import optimize
+from sklearn import decomposition
 import re, os
 
 from tqdm.auto import tqdm
 
+def SVD_dims(fitdata, maxdims=15, thresh=-0.001, normalise=True):
+    pca = decomposition.TruncatedSVD(maxdims)
+    try:
+        pca.fit(fitdata)
+        dims = np.where(np.diff(pca.explained_variance_ratio_)[1:] > thresh)[0][0] + 1
+    except ValueError:
+        dims = 0
+    except IndexError:
+        dims = pca.explained_variance_ratio_.shape[0]
+    return dims / (np.sqrt(fitdata.size) if normalise else 1)
+
 def corrcoef_f(x, y=None, rowvar=True, dtype=None):
     corr_mat = np.corrcoef(x, y=y, rowvar=rowvar, dtype=dtype)
-    corr_mat = (corr_mat + corr_mat.T)/2
-    tmp = np.isnan(corr_mat)
-    corr_mat[tmp] = 0
-    np.fill_diagonal(corr_mat, 1)
-    return corr_mat
+    if corr_mat.shape:
+        corr_mat = (corr_mat + corr_mat.T)/2
+        tmp = np.isnan(corr_mat)
+        corr_mat[tmp] = 0
+        np.fill_diagonal(corr_mat, 1)
+        return corr_mat
+    else:
+        return np.array([[1.0]])
 
 def binarize(data, axis=1, stds=2.5):
     median = np.median(data, axis=axis)
