@@ -282,26 +282,31 @@ class TExp(_ThorExp):
             istitch = np.arange(1, raw_max[0] + 1, dtype=np.intp)
             with tqdmlog(range(len(masks_cells_raw)-1), unit='plane', desc='>>>> Stitching   0 rois') as bar:
                 for plane_idx in bar:
-                    plane = masks[plane_idx]
                     plane_1 = masks_cells_raw[plane_idx+1].copy()
-                    iou = mask_metrics._intersection_over_union(plane_1, plane)[1:, istitch]
-                    corr = np.einsum(
-                        "ut,td->ud",
-                        u:=Fraw[np.arange(plane_1.max(), dtype=np.intp) + raw_max[plane_idx]],
-                        d:=Fraw[np.arange(raw_max[plane_idx-1] if plane_idx > 0 else 0, raw_max[plane_idx], dtype=np.intp)].T,
-                    )
-                    corr /= np.einsum('u,d->ud', np.linalg.norm(u, axis=1), np.linalg.norm(d, axis=0))
-                    final_closest = (1-iou_to_corr) * corr + iou_to_corr * iou
-                    final_closest[iou==0] = 0
-                    # eliminate values under the threshold
-                    final_closest[final_closest < cell_fuse_threshold] = 0.0
-                    # make so one plane roi can match with at max one plane_1 roi
-                    final_closest[final_closest < final_closest.max(axis=0)] = 0.0
-                    # get the best stitch candidate for each plane_1 roi
-                    istitch = istitch[np.argmax(final_closest, axis=1)]
-                    # remove cell that shouldn't be fused
-                    no_fuse = final_closest.sum(axis=1) == 0.0
-                    istitch[no_fuse] = 1 + plane.max() + np.arange(no_fuse.sum(), dtype=np.intp)
+                    if plane_1.max() == 0:
+                        continue
+                    plane = masks[plane_idx]
+                    if raw_max[plane_idx] - (raw_max[plane_idx-1] if plane_idx > 0 else 0) == 0:
+                        istitch = 1 + masks.max() + np.arange(plane_1.max(), dtype=np.intp)
+                    else:
+                        iou = mask_metrics._intersection_over_union(plane_1, plane)[1:, istitch]
+                        corr = np.einsum(
+                            "ut,td->ud",
+                            u:=Fraw[np.arange(plane_1.max(), dtype=np.intp) + raw_max[plane_idx]],
+                            d:=Fraw[np.arange(raw_max[plane_idx-1] if plane_idx > 0 else 0, raw_max[plane_idx], dtype=np.intp)].T,
+                        )
+                        corr /= np.einsum('u,d->ud', np.linalg.norm(u, axis=1), np.linalg.norm(d, axis=0))
+                        final_closest = (1-iou_to_corr) * corr + iou_to_corr * iou
+                        final_closest[iou==0] = 0
+                        # eliminate values under the threshold
+                        final_closest[final_closest < cell_fuse_threshold] = 0.0
+                        # make so one plane roi can match with at max one plane_1 roi
+                        final_closest[final_closest < final_closest.max(axis=0)] = 0.0
+                        # get the best stitch candidate for each plane_1 roi
+                        istitch = istitch[np.argmax(final_closest, axis=1)]
+                        # remove cell that shouldn't be fused
+                        no_fuse = final_closest.sum(axis=1) == 0.0
+                        istitch[no_fuse] = 1 + plane.max() + np.arange(no_fuse.sum(), dtype=np.intp)
                     bar.set_description(f">>>> Stitching {len(no_fuse)- no_fuse.sum():>3} rois")
                     masks[plane_idx+1] = np.append([0], istitch)[plane_1]
         return masks
