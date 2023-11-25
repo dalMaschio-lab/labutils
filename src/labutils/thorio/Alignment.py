@@ -1,6 +1,5 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING, DefaultDict, Protocol, Union
-from labutils.thorio.mapwrap import rawTseries
 if TYPE_CHECKING:
     from _typeshed import Incomplete
 else:
@@ -23,6 +22,7 @@ from itk import (
 )
 import itk
 import napari
+import tempfile
 # from functools import reduce
 
 
@@ -35,7 +35,7 @@ class AlignableMixIn:
     alignTo = Incomplete
 
     def __init__(self: _Image, *args, alignTo: _Image=Incomplete, **kwargs) -> None:
-        self._base_md['alignTo'] = alignTo.path
+        self._base_md['alignTo'] = alignTo.path if not os.path.isabs(alignTo.path) else os.path.basename(alignTo.path)
         super().__init__(*args, **kwargs)
         self.alignTo = alignTo
         setattr(self, 'alignTo', alignTo)
@@ -73,7 +73,7 @@ class AlignableMixIn:
 
     def transform_points(self, points, reverse=False):
         # TODO check if points need to be reversed
-        return np.stack([self.alignto_transforms['inv' if not reverse else 'fwd'].TransformPoint(p) for p in points])
+        return np.stack([self.alignto_transforms['inv' if not reverse else 'fwd'].TransformPoint(p.tolist()) for p in points])
 
     def transform_image(self, image, spacing=None, center=None, mp=1.0, return_reference=False, reverse=False):
         if type(image) is np.ndarray:
@@ -127,10 +127,10 @@ class AlignableMixInAnts(AlignableMixIn):
         'AlignStages': {}
     }
     @MemoizedProperty(Transforms.CompositeTransform.D3, )
-    def alignto_transforms(self, px2units, alignTo, AlignStages, ANTsInterpolation, ANTsHistMatch, ANTsWinInt, ANTsTemp, ANTsInit):
+    def alignto_transforms(self, px2units, alignTo, AlignStages, ANTsInterpolation, ANTsHistMatch, ANTsWinInt, ANTsInit):
         with TerminalHeader(' [Registration] '):
             print(">>>> Parsing parameters...")
-            alignpath = ANTsTemp if ANTsTemp is not None else self.path
+            alignpath = self.md['ANTsTemp'] if self.md['ANTsTemp'] is not None else tempfile.mkdtemp()
             
             # out_fn = os.path.join(alignpath, 'transformed.nii')
             reference_fn = os.path.join(alignpath, 'reference.nii')
@@ -221,6 +221,8 @@ class AlignableMixInAnts(AlignableMixIn):
             compositei = Transforms.CompositeTransform.D3.cast(compositei.GetTransformList()[0])
             os.unlink(outtr_prefx + 'Composite.h5')
             os.unlink(outtr_prefx + 'InverseComposite.h5')
+            if self.md['ANTsTemp'] is None:
+                os.rmdir(alignpath)
         
         return (composite, compositei)
 

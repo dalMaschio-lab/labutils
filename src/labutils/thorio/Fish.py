@@ -18,7 +18,7 @@ class AlignableTExp(AlignableMixInAnts, TExp):
         'ANTsInterpolation': 'WelchWindowedSinc',
         'ANTsHistMatch': True,
         'ANTsWinInt': (.5, .995),
-        'ANTsTemp': '/home/marica/.ants',
+        'ANTsTemp': None,
         'AlignStages': {
             'Rigid': {
                 'metric': [
@@ -37,17 +37,17 @@ class AlignableTExp(AlignableMixInAnts, TExp):
                 },
             'Affine': {
                 'metric': [
-                    'MeanSquares',
+                    'MI',
                     { 
-                        #'NumberOfHistogramBins': 16,
+                        'NumberOfHistogramBins': 16,
                         'MetricSamplingStrategy': 'Regular',
-                        'MetricSamplingPercentage': 60.,
+                        'MetricSamplingPercentage': 70.,
                     }
                 ],
-                'levels': [[40, 8, 4], [40, 6, 3],[30, 4, 2], [30, 3, 2]],# [(200, 12, 4), (200, 8, 3), (100, 4, 2), (80, 2, 2)],
+                'levels': [[50, 10, 4], [40, 8, 4], [40, 6, 3],[30, 4, 2], [40, 3, 2]],# [(200, 12, 4), (200, 8, 3), (100, 4, 2), (80, 2, 2)],
                 'learnRate': .1,
                 'convergenceWin': 5,
-                'convergenceVal': 1e-4,
+                'convergenceVal': 1e-5,
                 # 'interpolator': ['WindowedSinc', 'Welch']
                 },
             'SyN': {
@@ -59,12 +59,12 @@ class AlignableTExp(AlignableMixInAnts, TExp):
                         'MetricSamplingPercentage': 60.,
                     }
                 ],
-                'levels': [[40, 8, 4],[10, 4, 2], ],#[10, 3, 2]],# [(200, 12, 4), (200, 8, 3), (100, 4, 2), (80, 2, 2)],
+                'levels': [[40, 10, 4],[40, 8, 4], [10, 5, 2]],#[10, 4, 2]],# [(200, 12, 4), (200, 8, 3), (100, 4, 2), (80, 2, 2)],
                 'learnRate': .1,#.15,
                 'updateFieldVar': 0.6,
                 'totalFieldVar': 6,
                 'convergenceWin': 5,
-                'convergenceVal': 5e-5,
+                'convergenceVal': 1e-5,
                 #'interpolator': ['WindowedSinc', 'Welch']
                 }
         },
@@ -76,7 +76,7 @@ class AlignableZExp(AlignableMixInAnts, ZExp):
         'ANTsInterpolation': 'WelchWindowedSinc',
         'ANTsHistMatch': True,
         'ANTsWinInt': (.5, .995),
-        'ANTsTemp': '/home/marica/.ants',
+        'ANTsTemp': None,
         'AlignStages': {
             'Rigid': {
                 'metric': [
