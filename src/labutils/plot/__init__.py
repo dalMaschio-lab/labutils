@@ -9,7 +9,7 @@ plt.rcParams.update({'font.size':18})
 plt.rcParams['svg.fonttype'] = 'none'
 plt.rcParams["mathtext.default"] = 'regular'
 
-plt.Axes.quantify = lambda self, data, ticks, colors, width=.2, outlier=True, mann_alt='two-sided', dbg=False: quantify(data, ticks, colors, axes=self, width=width, outlier=outlier, mann_alt=mann_alt, dbg=dbg)
+plt.Axes.quantify = lambda self, data, ticks, colors, width=.2, outlier=True, parametric=False, mann_alt='two-sided', dbg=False: quantify(data, ticks, colors, axes=self, width=width, outlier=outlier, parametric=parametric, mann_alt=mann_alt, dbg=dbg)
 plt.Axes.strace = lambda self, x, y, c, cmap='viridis', **kwargs: strace(x, y, c, cmap=cmap, axes=self, **kwargs)
 class AutoFigure(object):
     style_override = {'svg.fonttype': 'none', 'font.size':18, "mathtext.default": 'regular'}
@@ -60,8 +60,13 @@ def strace(x, y, c, cmap='viridis', axes=None, vmin=None, vmax=None, **kwargs):
     axes.autoscale(axis=kwargs.get('scaleax', 'both'))
     return lcs
 
-def quantify(data, ticks, colors, axes=None, width=.2, outlier=True, mann_alt='two-sided', dbg=False):
-    (pvalmn := np.empty((len(ticks), len(ticks)))).fill(np.NaN)
+def quantify(data, ticks, colors, axes=None, width=.2, outlier=True, mann_alt='two-sided', parametric=False, dbg=False, violinplot=False):
+    if parametric:
+        pairwise_t = lambda a, b, alternative='two-sided': stats.ttest_ind(a, b, alternative=alternative, equal_var=False)
+        group_t = stats.alexandergovern
+    else:
+        pairwise_t = stats.mannwhitneyu
+        group_t = stats.kruskal
     if axes is None:
         axes = plt.gca()
     b = axes.boxplot(
@@ -80,20 +85,21 @@ def quantify(data, ticks, colors, axes=None, width=.2, outlier=True, mann_alt='t
     if len(data) < 2:
         pvalmn, pvalk = np.NaN, np.NaN
     else:
+        pvalmn = np.full((len(ticks), len(ticks)), np.NaN)
         for couple in it.combinations(range(len(ticks)),2):
             try:
                 if outlier:
-                    _, pval = stats.mannwhitneyu(data[couple[0]], data[couple[1]], alternative=mann_alt)
+                    _, pval = pairwise_t(data[couple[0]], data[couple[1]], alternative=mann_alt)
                 else:
                     pcs = [np.percentile(data[c], (5,95)) for c in couple]
                     dts = [[d for d in data[c] if pc[0]<d<pc[1]] for c, pc in zip(couple, pcs)]
-                    _, pval = stats.mannwhitneyu(dts[0], dts[1], alternative=mann_alt)
+                    pval = pairwise_t(dts[0], dts[1], alternative=mann_alt).pvalue
             except ValueError as e:
                 print(e, " setting pval to 1.0")
                 pval = 1.0
             make_sigbar(pval, couple, max(datacol[np.isfinite(datacol)].max() for datacol in data), axis=axes, pos=couple[1]-couple[0], dbg=dbg)
             pvalmn[couple[0], couple[1]] = pval
-        pvalk = stats.kruskal(*data)[1]
+        pvalk = group_t(*data).pvalue
     return b, dots, {'pvalmn': pvalmn, 'pvalk': pvalk}
 
 def make_sigbar(pval, xticks, ypos, axis:plt.Axes=None, pos=0, log=False, dbg=False):
