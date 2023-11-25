@@ -12,6 +12,7 @@ plt.rcParams["mathtext.default"] = 'regular'
 plt.Axes.quantify = lambda self, data, ticks, colors, width=.2, outlier=True, mann_alt='two-sided', dbg=False: quantify(data, ticks, colors, axes=self, width=width, outlier=outlier, mann_alt=mann_alt, dbg=dbg)
 plt.Axes.strace = lambda self, x, y, c, cmap='viridis', **kwargs: strace(x, y, c, cmap=cmap, axes=self, **kwargs)
 class AutoFigure(object):
+    style_override = {'svg.fonttype': 'none', 'font.size':18, "mathtext.default": 'regular'}
     figsize_save = {"figsize": (20,10), "dpi": 90}
     figsize_show = {"figsize": (16,9), "dpi": 120}
     def __init__(self, path,
@@ -22,23 +23,16 @@ class AutoFigure(object):
         self.path = path
         self.transparent = transparent
         self.format = svformat
-        self.figsize_save.update(figsize)
-        self.figsize_show.update(figsize)
+        figsize = {**(self.figsize_save if path else self.figsize_show), **figsize}
         self.block = block
-        self.style_ctx = plt.style.context(style)
+        self.style_ctx = plt.style.context([style, self.style_override])
         self.style_ctx.__enter__()
         self.figure, self.axes = plt.subplots(
             ncols=ncols, nrows=nrows,
             sharex=sharex, sharey=sharey,
-            gridspec_kw=gridspecs, **(self.figsize_save if path else self.figsize_show))
-        # if not isinstance(self.axes, np.ndarray):
-        #     axes = (self.axes,)
-        # else:
-        #     axes = self.axes
-        # for ax in axes:
-        #     make_metho
+            gridspec_kw=gridspecs, **figsize)
 
-    def __enter__(self) -> "(plt.Figure, plt.Axes|[plt.Axes]|[[plt.Axes]])":
+    def __enter__(self):
         return self.figure, self.axes
 
     def __exit__(self, type, value, traceback):
