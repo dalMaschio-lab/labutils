@@ -17,31 +17,30 @@ def attach_to_axis(func):
     return func
 
 class AutoFigure(object):
-    style_override = {'svg.fonttype': 'none', 'font.size':18, "mathtext.default": 'regular'}
+    style_override = {'svg.fonttype': 'none', 'font.size':14, "mathtext.default": 'regular'}
     figsize_save = {"figsize": (20,10), "dpi": 90}
     figsize_show = {"figsize": (16,9), "dpi": 120}
     def __init__(self, path,
                  ncols=1, nrows=1,
-                 sharex=False, sharey=False,
-                 gridspecs={}, figsize={}, svformat=".svg",
-                 block=False, style="bmh", transparent=False):
+                 sharex=False, sharey=False, height_ratios=None, width_ratios=None,
+                 gridspecs={}, layout='constrained',
+                 svformat=".svg", block=False, style="bmh", transparent=False, **figkw):
         self.path = path
         self.transparent = transparent
         self.format = svformat
-        figsize = {**(self.figsize_save if path else self.figsize_show), **figsize}
+        figkw = {**(self.figsize_save if path else self.figsize_show), **figkw}
         self.block = block
         self.style_ctx = plt.style.context([style, self.style_override])
         self.style_ctx.__enter__()
         self.figure, self.axes = plt.subplots(
             ncols=ncols, nrows=nrows,
-            sharex=sharex, sharey=sharey,
-            gridspec_kw=gridspecs, **figsize)
+            sharex=sharex, sharey=sharey, height_ratios=height_ratios, width_ratios=width_ratios,
+            gridspec_kw=gridspecs, layout=layout, **figkw)
 
     def __enter__(self):
         return self.figure, self.axes
 
     def __exit__(self, type, value, traceback):
-        self.figure.set_tight_layout(True)
         if isinstance(self.path, (os.PathLike, str)):
             if isinstance(self.format, (list, tuple)):
                 [self.figure.savefig(self.path + fmt, transparent=self.transparent) for fmt in self.format]
@@ -52,6 +51,32 @@ class AutoFigure(object):
             plt.show(block=self.block)
         self.style_ctx.__exit__(type, value, traceback)
         return False
+
+class AutoMosaic(AutoFigure):
+    def __init__(self, path, figshape=None, 
+            sharex=False, sharey=False, height_ratios=None, width_ratios=None,
+            gridspecs={}, per_subplot_kw={}, subplot_kw={}, layout='constrained',
+            svformat=".svg", block=False, style="default", transparent=False, **figkw):
+        if figshape is None:
+            super().__init__(self, path,
+                ncols=1, nrows=1,
+                sharex=sharex, sharey=sharey, height_ratios=height_ratios, width_ratios=width_ratios,
+                gridspecs={}, svformat=svformat, layout=layout,
+                block=block, style=style, transparent=transparent, **figkw
+            )
+            self.axes = {"": self.axes}
+        else:
+            self.path = path
+            self.transparent = transparent
+            self.format = svformat
+            figkw = {**(self.figsize_save if path else self.figsize_show), **figkw}
+            self.block = block
+            self.style_ctx = plt.style.context([style, self.style_override])
+            self.style_ctx.__enter__()
+            self.figure = plt.figure(layout=layout, **figkw)
+            self.axes = self.figure.subplot_mosaic(figshape,
+                sharex=sharex, sharey=sharey, height_ratios=height_ratios, width_ratios=width_ratios,
+                gridspec_kw=gridspecs, per_subplot_kw=per_subplot_kw, subplot_kw=subplot_kw,)
 
 @attach_to_axis
 def strace(x, y, c, cmap='viridis', axes=None, vmin=None, vmax=None, norm=None,**kwargs):
