@@ -19,7 +19,7 @@ class BrainRegion(object):
         if self.broken_stl:
             return None
         elif self._mesh is None:
-            self._mesh = vedo.io.load(os.path.join(self.path, 'stl.stl'))
+            self._mesh = vedo.file_io.load(os.path.join(self.path, 'stl.stl'))
             self._mesh.color(self.color, alpha=.6).compute_normals()
             self._mesh.backface_culling()
             self._mesh.smooth()
@@ -36,7 +36,7 @@ class BrainRegion(object):
 
 class MPIN_Atlas:
     json_region ='load_regions_data.json'
-    def __init__(self, path='/mnt/net/nasdmicro/reference_brain_V2'):
+    def __init__(self, path='/mnt/net/nasdmicro/Lodovichi/reference_brain_V2'):
         self.std_template = Template(os.path.join(path, 'MPIN-Atlas__Reference_brains__Fixed__HuCnlsGCaMP'), self)
         self.live_template = LiveTemplate(os.path.join(path, 'MPIN-Atlas__Reference_brains__Live__HuCH2BGCaMP'), self, alignTo=self.std_template)
         with open(os.path.join(path, "url")) as fd:
