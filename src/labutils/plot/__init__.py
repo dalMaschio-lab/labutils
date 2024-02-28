@@ -2,8 +2,9 @@ from . import tol_colors as tolc
 import os, inspect
 import itertools as it
 import numpy as np
-from matplotlib import pyplot as plt, collections
+from matplotlib import pyplot as plt, collections, text, lines
 from scipy import stats
+from collections import namedtuple
 
 def attach_to_axis(func):
     sig = inspect.signature(func)
@@ -70,10 +71,14 @@ def tukey_range(d, f):
     return Q1 - tk, Q3+ tk
 
 @attach_to_axis
-def quantify(data, ticks, colors, x_pos=None, axes=None, width=.3, outlier=True, alt='two-sided', parametric=False, dbg=False, violinplot=None):
+def quantify(data, ticks, colors, x_pos=None, axes=None, width=.3, outlier=False, alt='two-sided', parametric=False, dbg=False, violinplot=None, couples=None):
     if parametric:
         pairwise_t = lambda a, b, alternative='two-sided': stats.ttest_ind(a, b, alternative=alternative, equal_var=False)
         group_t = stats.alexandergovern
+    elif parametric is None:
+        TempResult = namedtuple('TempResult', ('statistic', 'pvalue'))
+        pairwise_t = lambda a, b, alternative=None: TempResult(np.NaN, 1.0)
+        group_t = lambda *args: TempResult(np.NaN, 1.0)
     else:
         pairwise_t = stats.mannwhitneyu
         group_t = stats.kruskal
@@ -93,9 +98,16 @@ def quantify(data, ticks, colors, x_pos=None, axes=None, width=.3, outlier=True,
         x_pos = np.arange(len(ticks))
     if violinplot is None:
         violinplot = all([d.size > 30 for d in data])
-        outlier = not violinplot
+        if violinplot:
+            outlier = False
+
+    if couples is None:
+        couples = it.combinations(range(len(ticks)),2)
     
-    between = lambda x, pct: pct[0] < x < pct[1]
+    between = lambda x, pct: \
+        pct[0] < x < pct[1] \
+        if not isinstance(x, (list, tuple, np.ndarray)) \
+        else ((pct[0]<np.array(x)) & (np.array(x)< pct[1]))
     if outlier is None or outlier is False:
         whis = (1,100)
         outrange = lambda _: (-np.inf, np.inf)
@@ -114,39 +126,47 @@ def quantify(data, ticks, colors, x_pos=None, axes=None, width=.3, outlier=True,
     if violinplot:
         b = axes.violinplot(
             data, positions=x_pos,
-            widths=width, showmedians=True, showextrema=False, quantiles=((.25,.75),)*len(ticks)
+            widths=width*2, showmedians=True, showextrema=False, quantiles=((.25,.75),)*len(ticks)
         )
-        pathinterp = []
+        
         if isint:
             [patch.remove() for patch in b.pop('bodies')]
+            hists =  tuple(map(lambda d: np.histogram(d, np.arange(d.min()-.5, d.max()+2.5, 1), density=True), data))
             b['bodies'] = [
                 #axes.barh(centers[:-1], (binned_data*width/binned_data.max()), height=1, left=x, color=colors[int(x)], edgecolor='k')
-                axes.fill_betweenx(centers[:-1], np.full_like(binned_data, x), x+(binned_data*width/binned_data.max()), step='post') #facecolor=colors[int(x)], edgecolor='k', 
-                for x, (binned_data, centers) in zip(x_pos, map(lambda d: np.histogram(d, np.arange(d.min()-.5, d.max()+2.5, 1), density=True), data))
+                axes.fill_betweenx(
+                    centers[:-1], np.full_like(binned_data, x), x+(binned_data*width/binned_data.max()),
+                    step='post', facecolor=colors[int(x)], edgecolor='k',
+                    lw=plt.rcParams['lines.linewidth'] * 0.8, label=tick
+                )
+                for x, (binned_data, centers), tick in zip(x_pos, hists, ticks)
             ]
-            interpf = lambda xn, x, y: y[(x-.5>=xn).nonzero()[0][0]]
+            pathinterp = [np.array((x+(binned_data*width/binned_data.max()), centers[:-1])).T for x, (binned_data, centers) in zip(x_pos, hists)]
+            interpf = lambda xn, x, y: y[(x+.5>=xn).nonzero()[0][0]]
         else:
             interpf = np.interp
-        for i, patch, c in zip(x_pos, b['bodies'], colors):
-            ph = patch.get_paths()[0].vertices[patch.get_paths()[0].vertices[:, 0] > i+np.finfo(np.float_).eps]
-            ph = ph[np.argsort(ph[:,1])]
-            ph = ph[np.diff(ph[:,1], prepend=0) > 0]
-            pathinterp.append(ph)
-            patch.get_paths()[0].vertices[:, 0] = np.clip(patch.get_paths()[0].vertices[:, 0], i, np.inf)
-            patch.set_linewidth(plt.rcParams['lines.linewidth'] * 0.8)
-            patch.set_facecolor(c)
-            patch.set_alpha(1.0)
-            patch.set_edgecolor('k')
+            pathinterp = []
+            for patch, c, tick, x in zip(b['bodies'], colors, ticks, x_pos):
+                ph = patch.get_paths()[0].vertices[patch.get_paths()[0].vertices[:, 0] > x]
+                ph = ph[np.argsort(ph[:,1])]
+                ph = ph[np.diff(ph[:,1], prepend=0) > 0]
+                pathinterp.append(ph)
+                patch.get_paths()[0].vertices[:, 0] = np.clip(patch.get_paths()[0].vertices[:, 0], x, np.inf)
+                patch.set_linewidth(plt.rcParams['lines.linewidth'] * 0.8)
+                patch.set_facecolor(c)
+                patch.set_alpha(1.0)
+                patch.set_edgecolor('k')
+                patch.set_label(tick)
         b['cmedians'].set_linestyle('--')
         b['cmedians'].set_linewidth(plt.rcParams['lines.linewidth'] * 0.8)
         b['cmedians'].set_color('k')
-        b['cmedians'].set_segments([((i, sg[0,1]), (interpf(sg[0,1],*patch.T[::-1]), sg[1,1])) for sg, patch, i in zip(b['cmedians'].get_segments(), pathinterp,np.arange(len(ticks)))])
+        b['cmedians'].set_segments([((x, sg[0,1]), (interpf(sg[0,1],*patch.T[::-1]), sg[1,1])) for sg, patch, x in zip(b['cmedians'].get_segments(), pathinterp, x_pos)])
         b['cquantiles'].set_linestyle('-.')
         b['cquantiles'].set_linewidth(plt.rcParams['lines.linewidth'] * 0.4)
         b['cquantiles'].set_color('k')
         b['cquantiles'].set_segments([
             ((i, sg[0,1]), (interpf(sg[0,1],*patch.T[::-1]), sg[1,1]))
-            for sgg, patch, i in zip(zip(b['cquantiles'].get_segments()[::2], b['cquantiles'].get_segments()[1::2]), pathinterp, np.arange(len(ticks)))
+            for sgg, patch, i in zip(zip(b['cquantiles'].get_segments()[::2], b['cquantiles'].get_segments()[1::2]), pathinterp, x_pos)
             for sg in sgg
         ])
         axes.set_xticks(x_pos, labels=ticks)
@@ -154,14 +174,14 @@ def quantify(data, ticks, colors, x_pos=None, axes=None, width=.3, outlier=True,
         b = axes.boxplot(
             data, positions=x_pos, labels=ticks,
             notch=False, widths=width*2, whis=whis, showfliers=False,
-            patch_artist=True, zorder=.5, meanline=False, medianprops={"marker": '*', "zorder": 2.5}
+            patch_artist=True, zorder=.5, meanline=False, medianprops={"marker": '.', "zorder": 2.5, "color": 'k', 'ls': '--'}
         )
-        [(patch.set_facecolor(c)) for patch,c in zip(b["boxes"], colors)]
+        [(patch.set_facecolor(c), patch.set_label(tick)) for patch,c, tick in zip(b["boxes"], colors, ticks)]
     
     dots = [
         axes.plot(
             xscatter(datacol, x, width, half=violinplot), datacol,
-            mfc=c, mec="k", marker="o", ls="", alpha=.8, zorder=1.5
+            mfc=c, mec="k", marker="o", ls="", alpha=.8, zorder=1.5, #markersize=plt.rcParams['lines.markersize']
         ) if not outlier else
         axes.scatter(
             xscatter(datacol, x, width, half=violinplot), datacol, s=[(plt.rcParams['lines.markersize'] * (1. if between(p, outrange(datacol)) else .5))** 2 for p in datacol],
@@ -173,7 +193,8 @@ def quantify(data, ticks, colors, x_pos=None, axes=None, width=.3, outlier=True,
         pvalmn, pvalk = np.NaN, np.NaN
     else:
         pvalmn = np.full((len(ticks), len(ticks)), np.NaN)
-        for couple in it.combinations(range(len(ticks)),2):
+        b['sigbars'] = []
+        for couple in couples:
             try:
                 if not outlier:
                     pval = pairwise_t(data[couple[0]], data[couple[1]], alternative=alt).pvalue
@@ -184,28 +205,43 @@ def quantify(data, ticks, colors, x_pos=None, axes=None, width=.3, outlier=True,
             except ValueError as e:
                 print(e, " setting pval to 1.0")
                 pval = 1.0
-            make_sigbar(pval, couple, max(datacol[np.isfinite(datacol)].max() for datacol in data), axis=axes, pos=couple[1]-couple[0], dbg=dbg)
+            plt.gcf().draw_without_rendering()
+            sg = make_sigbar(
+                pval, tuple(x_pos[cp] for cp in couple),
+                max(datacol[np.isfinite(datacol)].max() for idx, datacol in enumerate(data) if x_pos[couple[0]]<=x_pos[idx]<=x_pos[couple[1]] or x_pos[couple[1]]<=x_pos[idx]<=x_pos[couple[0]]),
+                axes=axes, dbg=dbg, dodges=b['sigbars']
+            )
             pvalmn[couple[0], couple[1]] = pval
+            b['sigbars'].append(sg)
         pvalk = group_t(*data).pvalue
-    return b, dots, {'pvalmn': pvalmn, 'pvalk': pvalk}
+    return b, dots, {
+        'pvalmn': pvalmn.tolist(), 'pvalk': pvalk,
+        'means':[d[between(d, outrange(d))].mean() for d in data],
+        'std': [d[between(d, outrange(d))].std() for d in data],
+        'n': [int(between(d, outrange(d)).sum()) for d in data],
+        }
 
 def xscatter(data, xpos, width, half=False, margin=.02):
     counts, edges = np.histogram(data,)
     xvals = [(margin if half or (i%2) else -margin) + (np.linspace(0 if half else -width * (c / max(counts)), width * (c / max(counts)), num=c, endpoint=True) if c > 1 else np.array((0,))) for i, c in enumerate(counts)]
     return xpos - np.concatenate(xvals)[np.digitize(data, edges[:-1]).argsort().argsort()]
 
-def make_sigbar(pval, xticks, ypos, axis:plt.Axes=None, pos=0, log=False, dbg=False):
-    if axis is None:
-        axis=plt.gca()
-    ytick = axis.get_yticks()
-    ytick = ytick[-1] - ytick[0]
-    ytick = (np.log10(ypos*10) if log else ytick/100)
-    ypos += ytick * 2.5 * (pos+1)
-    xticks = (xticks[0] + .05, xticks[1] - .05)
+SigBar = namedtuple('SigBar', ('line', 'text'))
+
+def make_sigbar(pval, xticks, ypos, axes: plt.Axes=None, dodges=[], pos=1, dbg=False):
+    if axes is None:
+        axes=plt.gca()
+    trData =  axes.transScale + axes.transLimits
+    box = trData.transform(list(zip(xticks, (ypos, ypos))))
+    box[:, 0] = (box[:, 0] - box[:, 0].mean()) * .9 + box[:, 0].mean()
+    box[:, 1] += 0.025 * pos
+    xticks, (ypos, _) = trData.inverted().transform(box).T
     if not dbg:
         try:
             pval = np.log10(.5/pval)
-            pval = ("~*" if 0.8<pval<1.0 else "*" * int(pval)) if pval < 6 else f"{int(pval)}*"
+            onlystars = pval < 6
+            # pval = ("~*" if 0.8<pval<1.0 else "*" * int(pval)) if onlystars else f"{int(pval)}*"
+            pval = "*" * int(pval) if onlystars else f"{int(pval)}*"
         except (OverflowError, ZeroDivisionError) as e:
             print(e, "\n", "setting pval stars to inf")
             pval = "$\\infty$"
@@ -214,13 +250,35 @@ def make_sigbar(pval, xticks, ypos, axis:plt.Axes=None, pos=0, log=False, dbg=Fa
             pval = "NaN"
     else:
         pval = f"{pval:.3f}"
-    txt = axis.text(sum(xticks,0)/2, ypos + ytick, pval if pval else "")
+    
     if pval:
-        axis.plot(xticks, (ypos, ypos), color=(0,0,0))
-    #_, mx =axis.get_ylim()
-    #axis.set_ylim((None, max(ypos+ytick*4, mx)))
-    axis.autoscale(axis='y')
-
-#plt.Axes.quantify = lambda self, data, ticks, colors, width=.2, outlier=True, parametric=False, mann_alt='two-sided', dbg=False: quantify(data, ticks, colors, axes=self, width=width, outlier=outlier, parametric=parametric, mann_alt=mann_alt, dbg=dbg, violinplot=violinplot)
-# plt.Axes.strace = lambda self, x, y, c, cmap='viridis', **kwargs: strace(x, y, c, cmap=cmap, axes=self, **kwargs)
-
+        line = lines.Line2D(xticks, (ypos, ypos),)
+        axes.add_artist(line)
+        txt = text.Annotation(pval, xy=(0, 2), xycoords=text.OffsetFrom(line, (0.5,0)), ha='center', va='center_baseline' if onlystars else'baseline',)
+        axes.add_artist(txt)
+        while True:
+            extl, extt = line.get_window_extent(), txt.get_window_extent()
+            overlaps = [
+                otherbar 
+                for otherbar in dodges 
+                if otherbar and (otherbar.line.get_window_extent().padded(1.01).overlaps(extl) or otherbar.text.get_window_extent().padded(1.01).overlaps(extl) or otherbar.line.get_window_extent().padded(1.01).overlaps(extt))
+            ]
+            if len(overlaps):
+                bboxd = axes.transData.inverted().transform(overlaps[0].text.get_window_extent().padded(1.1))
+                line.set_ydata(bboxd[:, 1].max() + np.array(line.get_ydata()) - bboxd[:, 1].min())
+                continue
+            else:
+                break
+        line.remove()
+        ypos = line.get_ydata()[0]
+        del line
+        line = axes.plot(xticks, (ypos, ypos), color=(0,0,0))[0]
+        txt = axes.annotate(
+            pval, xy=(0, 2), xycoords=text.OffsetFrom(line, (0.5,0)),
+            ha='center', va='center_baseline' if onlystars else'baseline',
+            #bbox=dict(boxstyle="round", ec=(0,)*3, fc=(.8,)*3,)
+        )
+        axes.autoscale(axis='y')
+        return SigBar(line, txt)
+    else:
+        return None
