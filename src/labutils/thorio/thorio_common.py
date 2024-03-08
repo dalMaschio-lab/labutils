@@ -45,6 +45,7 @@ class _ThorExp(_Image):
     md_xml = 'Experiment.xml'
     def __init__(self, path, parent: "_Model | None", **kwargs):
         self.path = path
+        os.makedirs(os.path.join(self.path, getattr(self, 'cachepath', '.')), exist_ok=True)
         self.parent = parent
         self._pre_md = {}
         tuple(self._pre_md.update(getattr(parentclass, '_base_md', {})) for parentclass in self.__class__.mro()[::-1])
