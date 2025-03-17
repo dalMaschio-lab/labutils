@@ -25,7 +25,8 @@ dependencies = [
     "requests",
     "cellpose",
     "itk",
-    "numba"
+    "numba",
+    "napari"
 ]
 
 [project.urls]
