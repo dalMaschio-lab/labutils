@@ -24,7 +24,7 @@ class AutoFigure(object):
                  ncols=1, nrows=1,
                  sharex=False, sharey=False, height_ratios=None, width_ratios=None,
                  gridspecs={}, layout='constrained',
-                 svformat=".svg", block=False, style="bmh", transparent=False, **figkw):
+                 svformat=(".svg", '.png'), block=True, style="default", transparent=False, **figkw): #style="tableau-colorblind10"
         self.path = path
         self.transparent = transparent
         self.format = svformat
@@ -56,7 +56,7 @@ class AutoMosaic(AutoFigure):
     def __init__(self, path, figshape=None, 
             sharex=False, sharey=False, height_ratios=None, width_ratios=None,
             gridspecs={}, per_subplot_kw={}, subplot_kw={}, layout='constrained',
-            svformat=".svg", block=False, style="default", transparent=False, **figkw):
+            svformat=(".svg", ".png"), block=True, style="default", transparent=False, **figkw):
         if figshape is None:
             super().__init__(self, path,
                 ncols=1, nrows=1,
