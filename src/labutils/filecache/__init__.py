@@ -224,6 +224,7 @@ class MemoizedProperty:
                 return instance.__dict__[self.name]
             except KeyError:
                 cachepath: Any = os.path.join(instance.path, getattr(instance, 'cachepath', '.'))
+                os.makedirs(cachepath, exist_ok=True)
                 instance_args = {name: instance.md[name] for name in self.f_args_names.union(self.d_args_names)}
             try:
                 if instance_args:
