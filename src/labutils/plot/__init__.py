@@ -217,11 +217,11 @@ def quantify(data, ticks, colors, x_pos=None, axes=None, width=.3, outlier=False
     
     dots = [
         axes.plot(
-            xscatter(datacol, x, width, half=violinplot), datacol,
+            xscatter(datacol, x, width-.05, half=violinplot, margin=.0), datacol,
             mfc=c, mec="k", marker="o", ls="", alpha=.8, zorder=1.5, #markersize=plt.rcParams['lines.markersize']
         ) if not outlier else
         axes.scatter(
-            xscatter(datacol, x, width, half=violinplot), datacol, s=[(plt.rcParams['lines.markersize'] * (1. if between(p, outrange(datacol)) else .5))** 2 for p in datacol],
+            xscatter(datacol, x, width-.05, half=violinplot, margin=.0), datacol, s=[(plt.rcParams['lines.markersize'] * (1. if between(p, outrange(datacol[np.isfinite(datacol)])) else .5))** 2 for p in datacol],
             c=c, edgecolors='k', marker="o", alpha=.8, zorder=1.5, ls=''
         )
         for x, datacol, c in zip(x_pos, data, colors)
@@ -271,9 +271,19 @@ def quantify(data, ticks, colors, x_pos=None, axes=None, width=.3, outlier=False
         }
 
 def xscatter(data, xpos, width, half=False, margin=.02):
-    counts, edges = np.histogram(data,)
-    xvals = [(margin if half or (i%2) else -margin) + (np.linspace(0 if half else -width * (c / max(counts)), width * (c / max(counts)), num=c, endpoint=True) if c > 1 else np.array((0,))) for i, c in enumerate(counts)]
-    return xpos - np.concatenate(xvals)[np.digitize(data, edges[:-1]).argsort().argsort()]
+    finite = np.isfinite(data)
+    counts, edges = np.histogram(data[finite],)
+    xvals = [
+        (margin if half or (i%2) else -margin) + (np.linspace(
+                0 if half else -width * (c / max(counts)),
+                width * (c / max(counts)),
+                num=c, endpoint=True
+            ) if c > 1 else np.array((0,)))
+        for i, c in enumerate(counts)
+    ]
+    xpositions = np.full_like(data, np.NaN)
+    xpositions[finite] = xpos - np.concatenate(xvals)[np.digitize(data[finite], edges[:-1]).argsort().argsort()]
+    return xpositions
 
 SigBar = namedtuple('SigBar', ('line', 'text'))
 
