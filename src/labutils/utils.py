@@ -1,7 +1,7 @@
 import numpy as np
 from skimage import transform
 from scipy import optimize
-from sklearn import decomposition
+from sklearn import decomposition, linear_model, metrics
 import re, os
 
 from tqdm.auto import tqdm
@@ -97,8 +97,18 @@ def times2convregress_(regressors: np.ndarray, fr: float, ca2_off: float=7.8, ca
     return np.stack([np.convolve(tev, transient, mode='same')/transient.sum() for tev in regressors], axis=0)
 
 def times2convregress(regressors: np.ndarray, fs: float, ca2_off: float=7.8, ca2_on: float=1.4, ca2_delay=5.6, baseoff=15):
-    transient = ca2p_transient(np.linspace(0., a:=(ca2_on+ca2_off*2+ca2_delay), int(a/fs)), 1.0, ca2_delay, ca2_off, ca2_on)
-    return np.stack([np.convolve(tev, transient, mode='full') for tev in regressors], axis=0)[:, :regressors.shape[1]]
+    transient = ca2p_transient(np.linspace(0., a:=(ca2_on+ca2_off*2.5+ca2_delay), int(a/fs)), 1.0, ca2_delay, ca2_off, ca2_on)
+    return np.apply_along_axis(lambda tev: np.convolve(tev, transient, mode='full'), -1, regressors)[..., :regressors.shape[-1]]
+    # return np.stack([np.convolve(tev, transient, mode='full') for tev in regressors], axis=0)[:, :regressors.shape[1]]
+
+def regress(data, regressors, return_rec=False):
+    clf = linear_model.LinearRegression(fit_intercept=False, n_jobs=-1).fit(regressors.T, data.T)
+    reconstructed_o = clf.coef_ @ regressors
+    scores_o = metrics.r2_score(data.T, reconstructed_o.T, multioutput="raw_values")
+    if return_rec:
+        return clf.coef_, scores_o, reconstructed_o
+    else:
+        return clf.coef_, scores_o,
 
 def detect_bidi_offset(img, offsets=np.arange(-10,35),) -> float:
     even = img[::2]
