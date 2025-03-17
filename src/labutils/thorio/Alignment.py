@@ -23,6 +23,7 @@ from itk import (
 import itk
 import napari
 import tempfile
+import platform
 # from functools import reduce
 
 
@@ -167,7 +168,7 @@ class AlignableMixInAnts(AlignableMixIn):
 
             print(">>>> Starting ANTs...")
             p = subprocess.Popen(
-                executable=f"{self.antsbin}/antsRegistration", cwd=alignpath,
+                executable=f"{self.antsbin}/antsRegistration" + '.exe' if platform.system() == 'Windows' else '', cwd=alignpath,
                 args=ants_stages,
                 bufsize=1, stdout=subprocess.PIPE, stderr=sys.stderr, encoding='utf-8', shell=False,
             )
