@@ -100,6 +100,12 @@ class MPIN_Atlas:
             level -= 1
         ids.extend([i[0] for i in h])
         return [self.regions[i] for i in ids]
+    
+    def get_region(self, name):
+        for r in self.regions.values():
+            if r.name == name:
+                return r
+        return None
 
 if __name__ == "__main__":
     at = MPIN_Atlas('/mnt/net/nasdmicro/reference_brain_V2/')
