@@ -96,14 +96,25 @@ def tukey_range(d, f):
     return Q1 - tk, Q3+ tk
 
 @attach_to_axis
-def quantify(data, ticks, colors, x_pos=None, axes=None, width=.3, outlier=False, alt='two-sided', parametric=False, dbg=False, violinplot=None, couples=None):
-    if parametric:
+def quantify(data, ticks, colors, x_pos=None, axes=None, width=.3, outlier=False, alt='two-sided', parametric=False, dbg=False, violinplot=None, couples=None, multiple_corr=False, supppress_lines=False):
+    if parametric is True:
         pairwise_t = lambda a, b, alternative='two-sided': stats.ttest_ind(a, b, alternative=alternative, equal_var=False)
         group_t = stats.alexandergovern
     elif parametric is None:
         TempResult = namedtuple('TempResult', ('statistic', 'pvalue'))
         pairwise_t = lambda a, b, alternative=None: TempResult(np.NaN, 1.0)
         group_t = lambda *args: TempResult(np.NaN, 1.0)
+    elif parametric == 'paired':
+        pairwise_t = stats.wilcoxon
+        group_t = stats.friedmanchisquare
+        assert all([d.size == data[0].size for d in data]), "paired data must have the same size"
+    elif parametric == 'automatic':
+        if all([(stats.shapiro(d).pvalue > .05) if d.size > 3 else False for d in data]):
+            pairwise_t = stats.ttest_ind
+            group_t = stats.f_oneway
+        else:
+            pairwise_t = stats.mannwhitneyu
+            group_t = stats.kruskal
     else:
         pairwise_t = stats.mannwhitneyu
         group_t = stats.kruskal
@@ -215,6 +226,11 @@ def quantify(data, ticks, colors, x_pos=None, axes=None, width=.3, outlier=False
         )
         for x, datacol, c in zip(x_pos, data, colors)
     ]
+    if parametric == 'paired' and not supppress_lines:
+        x_pos_scattered = np.array([dot.get_offsets().data[:,0] for dot in dots])
+        for x_pos_subj, data_subj in zip(x_pos_scattered.T, np.array(data).T):
+            plt.plot(x_pos_subj, data_subj, c='k', alpha=.4, zorder=1.0, ls='-')
+
     if len(data) < 2:
         pvalmn, pvalk = np.NaN, np.NaN
     else:
