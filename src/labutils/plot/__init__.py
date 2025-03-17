@@ -122,19 +122,19 @@ def quantify(data, ticks, colors, x_pos=None, axes=None, width=.3, outlier=False
     if x_pos is None:
         x_pos = np.arange(len(ticks))
     if violinplot is None:
-        violinplot = all([d.size > 30 for d in data])
+        violinplot = all([d.size > 50 for d in data])
         if violinplot:
             outlier = False
 
     if couples is None:
-        couples = it.combinations(range(len(ticks)),2)
+        couples = tuple(it.combinations(range(len(ticks)),2))
     
     between = lambda x, pct: \
         pct[0] < x < pct[1] \
         if not isinstance(x, (list, tuple, np.ndarray)) \
         else ((pct[0]<np.array(x)) & (np.array(x)< pct[1]))
     if outlier is None or outlier is False:
-        whis = (1,100)
+        whis = (0,100)
         outrange = lambda _: (-np.inf, np.inf)
     elif outlier is True:
         whis = 1.5
@@ -148,15 +148,16 @@ def quantify(data, ticks, colors, x_pos=None, axes=None, width=.3, outlier=False
     else:
         raise TypeError('outlier must be either None, a percentile range or a float for tukeys range')
 
+    cleandata = [d[np.isfinite(d)] for d in data]
     if violinplot:
         b = axes.violinplot(
-            data, positions=x_pos,
+            cleandata, positions=x_pos,
             widths=width*2, showmedians=True, showextrema=False, quantiles=((.25,.75),)*len(ticks)
         )
         
         if isint:
             [patch.remove() for patch in b.pop('bodies')]
-            hists =  tuple(map(lambda d: np.histogram(d, np.arange(d.min()-.5, d.max()+2.5, 1), density=True), data))
+            hists =  tuple(map(lambda d: np.histogram(d, np.arange(d.min()-.5, d.max()+2.5, 1), density=True), cleandata))
             b['bodies'] = [
                 #axes.barh(centers[:-1], (binned_data*width/binned_data.max()), height=1, left=x, color=colors[int(x)], edgecolor='k')
                 axes.fill_betweenx(
@@ -197,7 +198,7 @@ def quantify(data, ticks, colors, x_pos=None, axes=None, width=.3, outlier=False
         axes.set_xticks(x_pos, labels=ticks)
     else:
         b = axes.boxplot(
-            data, positions=x_pos, labels=ticks,
+            cleandata, positions=x_pos, labels=ticks,
             notch=False, widths=width*2, whis=whis, showfliers=False,
             patch_artist=True, zorder=.5, meanline=False, medianprops={"marker": '.', "zorder": 2.5, "color": 'k', 'ls': '--'}
         )
@@ -221,29 +222,36 @@ def quantify(data, ticks, colors, x_pos=None, axes=None, width=.3, outlier=False
         b['sigbars'] = []
         for couple in couples:
             try:
-                if not outlier:
-                    pval = pairwise_t(data[couple[0]], data[couple[1]], alternative=alt).pvalue
+                pcs = [outrange(cleandata[c]) for c in couple]
+                if parametric == 'paired':
+                    dts = [*zip(*[(d_l, d_r) for d_l, d_r in zip(data[couple[0]], data[couple[1]]) if between(d_l, pcs[0]) and between(d_r, pcs[1])])]
                 else:
-                    pcs = [outrange(data[c]) for c in couple]
-                    dts = [[d for d in data[c] if pc[0]<d<pc[1]] for c, pc in zip(couple, pcs)]
-                    pval = pairwise_t(dts[0], dts[1], alternative=alt).pvalue
+                    dts = [data[c][between(data[c], pc)] for c, pc in zip(couple, pcs)]
+                pval = pairwise_t(dts[0], dts[1], alternative=alt).pvalue
             except ValueError as e:
                 print(e, " setting pval to 1.0")
                 pval = 1.0
+            pvalmn[couple[0], couple[1]] = pval
+
+        if multiple_corr:
+            pvalmn[np.isfinite(pvalmn)] = stats.false_discovery_control(pvalmn[np.isfinite(pvalmn)])
+            
+        for couple in couples:
+            if data[couple[0]].size < 2 or data[couple[1]].size < 2:
+                continue
             plt.gcf().draw_without_rendering()
             sg = make_sigbar(
-                pval, tuple(x_pos[cp] for cp in couple),
-                max(datacol[np.isfinite(datacol)].max() for idx, datacol in enumerate(data) if x_pos[couple[0]]<=x_pos[idx]<=x_pos[couple[1]] or x_pos[couple[1]]<=x_pos[idx]<=x_pos[couple[0]]),
+                pvalmn[couple[0], couple[1]], tuple(x_pos[cp] for cp in couple),
+                max(datacol[np.array([between(p, outrange(datacol[np.isfinite(datacol)])) for p in datacol])].max() for idx, datacol in enumerate(data) if x_pos[couple[0]]<=x_pos[idx]<=x_pos[couple[1]] or x_pos[couple[1]]<=x_pos[idx]<=x_pos[couple[0]]),
                 axes=axes, dbg=dbg, dodges=b['sigbars']
             )
-            pvalmn[couple[0], couple[1]] = pval
             b['sigbars'].append(sg)
         pvalk = group_t(*data).pvalue
     return b, dots, {
-        'pvalmn': pvalmn.tolist(), 'pvalk': pvalk,
-        'means':[d[between(d, outrange(d))].mean() for d in data],
-        'std': [d[between(d, outrange(d))].std() for d in data],
-        'n': [int(between(d, outrange(d)).sum()) for d in data],
+        'pvalmn': pvalmn.tolist() if pvalmn.size>1 else pvalmn, 'pvalk': pvalk,
+        'means':[d[between(d, outrange(d))].mean() for d in cleandata],
+        'std': [d[between(d, outrange(d))].std() for d in cleandata],
+        'n': [int(between(d, outrange(d)).sum()) for d in cleandata],
         }
 
 def xscatter(data, xpos, width, half=False, margin=.02):
