@@ -288,9 +288,9 @@ def make_sigbar(pval, xticks, ypos, axes: plt.Axes=None, dodges=[], pos=1, dbg=F
     if not dbg:
         try:
             pval = np.log10(.5/pval)
-            onlystars = pval < 6
+            onlystars = pval < 4
             # pval = ("~*" if 0.8<pval<1.0 else "*" * int(pval)) if onlystars else f"{int(pval)}*"
-            pval = "*" * int(pval) if onlystars else f"{int(pval)}*"
+            pval = "*" * int(pval) if onlystars else f">****"
         except (OverflowError, ZeroDivisionError) as e:
             print(e, "\n", "setting pval stars to inf")
             pval = "$\\infty$"
@@ -299,11 +299,12 @@ def make_sigbar(pval, xticks, ypos, axes: plt.Axes=None, dodges=[], pos=1, dbg=F
             pval = "NaN"
     else:
         pval = f"{pval:.3f}"
+        onlystars = False
     
     if pval:
         line = lines.Line2D(xticks, (ypos, ypos),)
         axes.add_artist(line)
-        txt = text.Annotation(pval, xy=(0, 2), xycoords=text.OffsetFrom(line, (0.5,0)), ha='center', va='center_baseline' if onlystars else'baseline',)
+        txt = text.Annotation(pval, xy=(0, 10), xycoords=text.OffsetFrom(line, (0.5,0)), ha='center', va='center_baseline' if onlystars else'baseline',weight='bold',size='large')
         axes.add_artist(txt)
         while True:
             extl, extt = line.get_window_extent(), txt.get_window_extent()
@@ -323,8 +324,8 @@ def make_sigbar(pval, xticks, ypos, axes: plt.Axes=None, dodges=[], pos=1, dbg=F
         del line
         line = axes.plot(xticks, (ypos, ypos), color=(0,0,0))[0]
         txt = axes.annotate(
-            pval, xy=(0, 2), xycoords=text.OffsetFrom(line, (0.5,0)),
-            ha='center', va='center_baseline' if onlystars else'baseline',
+            pval, xy=(0, 10), xycoords=text.OffsetFrom(line, (0.5,0)),
+            ha='center', va='center_baseline' if onlystars else'baseline',weight='bold',size='large'
             #bbox=dict(boxstyle="round", ec=(0,)*3, fc=(.8,)*3,)
         )
         axes.autoscale(axis='y')
