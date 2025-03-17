@@ -262,7 +262,7 @@ def quantify(data, ticks, colors, x_pos=None, axes=None, width=.3, outlier=False
                 axes=axes, dbg=dbg, dodges=b['sigbars']
             )
             b['sigbars'].append(sg)
-        pvalk = group_t(*data).pvalue
+        pvalk = group_t(*data).pvalue if len(data) > 2 else np.NaN
     return b, dots, {
         'pvalmn': pvalmn.tolist() if pvalmn.size>1 else pvalmn, 'pvalk': pvalk,
         'means':[d[between(d, outrange(d))].mean() for d in cleandata],
